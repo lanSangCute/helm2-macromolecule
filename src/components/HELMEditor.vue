@@ -37,6 +37,13 @@
         >
           Select
         </el-button>
+        <el-button
+          @click="toggleConnectionMode"
+          :type="connectionMode ? 'success' : ''"
+          :icon="Connection"
+        >
+          连接线 {{ connectionMode ? '开' : '关' }}
+        </el-button>
       </div>
     </div>
     
@@ -81,11 +88,21 @@
           <div 
             ref="sequenceDisplayRef"
             class="sequence-display"
-            :class="{ 'sequence-display--marquee': isMarqueeMode }"
+            :class="{ 
+              'sequence-display--marquee': isMarqueeMode,
+              'sequence-display--connection': connectionMode 
+            }"
             @dragover="handleSequenceDragOver"
             @drop="handleSequenceDrop"
             @pointerdown="handleMarqueePointerDown"
           >
+            <!-- Canvas 层用于绘制连接线 -->
+            <canvas
+              ref="connectionCanvasRef"
+              class="connection-canvas"
+              :style="canvasStyle"
+            />
+            
             <span
               v-for="(monomer, index) in currentSequence"
               :key="index"
@@ -95,15 +112,19 @@
                 getMonomerClass(monomer.type),
                 { selected: selectedIndex === index },
                 { 'multi-selected': selectedIndices.has(index) },
-                { 'drag-over': dragOverIndex === index }
+                { 'drag-over': dragOverIndex === index },
+                { 'connection-source': connectionStartIndex === index },
+                { 'connection-hover': connectionHoverIndex === index && connectionMode }
               ]"
-              :draggable="!isMarqueeMode"
-              @click="selectMonomer(index, $event)"
+              :draggable="!isMarqueeMode && !connectionMode"
+              @click="handleMonomerClick(index, $event)"
               @dragstart="handleDragStart($event, index)"
               @dragend="handleDragEnd($event)"
               @dragover="handleDragOver($event, index)"
               @dragleave="handleDragLeave($event)"
               @drop="handleDrop($event, index)"
+              @mouseenter="handleMonomerMouseEnter(index)"
+              @mouseleave="handleMonomerMouseLeave(index)"
             >
               <span class="monomer-drag-handle">☰</span>
               {{ monomer.code }}
@@ -158,7 +179,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { 
   Plus, FolderOpened, Download, Document, 
-  RefreshLeft, RefreshRight, Close, Delete, Pointer
+  RefreshLeft, RefreshRight, Close, Delete, Pointer, Connection
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import helmParser, {
@@ -179,6 +200,7 @@ const selectedIndices = ref(new Set())
 const isMultiSelectMode = ref(false)
 const isMarqueeMode = ref(false)
 const sequenceDisplayRef = ref(null)
+const connectionCanvasRef = ref(null)
 const marqueeDragging = ref(false)
 const marqueeStart = ref({ x: 0, y: 0 })
 const marqueeEnd = ref({ x: 0, y: 0 })
@@ -191,6 +213,12 @@ const polymerType = ref('PEPTIDE')
 const history = ref([])
 const historyIndex = ref(-1)
 const fileInputRef = ref(null)
+// 连接线相关
+const connections = ref([]) // { from: number, to: number, type: string }
+const connectionMode = ref(false)
+const connectionStartIndex = ref(-1)
+const connectionHoverIndex = ref(-1)
+const canvasSize = ref({ width: 0, height: 0 })
 
 // 单体库
 const aminoAcids = Object.values(helmParser.AMINO_ACIDS).map(aa => ({
@@ -225,13 +253,23 @@ const marqueeBoxStyle = computed(() => {
   }
 })
 
+const canvasStyle = computed(() => {
+  return {
+    width: `${canvasSize.value.width}px`,
+    height: `${canvasSize.value.height}px`
+  }
+})
+
 // 方法
 function newMolecule() {
   saveToHistory()
   currentSequence.value = []
+  connections.value = []
   helmInput.value = ''
   helmOutput.value = ''
   selectedIndex.value = -1
+  connectionStartIndex.value = -1
+  drawConnections()
 }
 
 function openFile() {
@@ -411,23 +449,32 @@ function downloadTextFile(filename, content, mimeType = 'text/plain') {
 function undo() {
   if (historyIndex.value > 0) {
     historyIndex.value--
-    currentSequence.value = [...history.value[historyIndex.value]]
+    const state = history.value[historyIndex.value]
+    currentSequence.value = [...state.sequence]
+    connections.value = [...state.connections]
     updateHELMOutput()
+    drawConnections()
   }
 }
 
 function redo() {
   if (historyIndex.value < history.value.length - 1) {
     historyIndex.value++
-    currentSequence.value = [...history.value[historyIndex.value]]
+    const state = history.value[historyIndex.value]
+    currentSequence.value = [...state.sequence]
+    connections.value = [...state.connections]
     updateHELMOutput()
+    drawConnections()
   }
 }
 
 function saveToHistory() {
   // 移除当前索引之后的历史
   history.value = history.value.slice(0, historyIndex.value + 1)
-  history.value.push([...currentSequence.value])
+  history.value.push({
+    sequence: [...currentSequence.value],
+    connections: [...connections.value]
+  })
   historyIndex.value = history.value.length - 1
 }
 
@@ -498,6 +545,165 @@ function toggleMarqueeMode() {
     ElMessage.success('框选：在序列区域拖拽划定范围；Delete 删除选中')
   } else {
     ElMessage.info('已关闭框选')
+  }
+}
+
+function toggleConnectionMode() {
+  connectionMode.value = !connectionMode.value
+  connectionStartIndex.value = -1
+  connectionHoverIndex.value = -1
+  if (connectionMode.value) {
+    isMarqueeMode.value = false
+    ElMessage.success('连接线模式：点击两个单体创建化学键（如二硫键）')
+    setTimeout(updateCanvasSize, 0)
+  } else {
+    ElMessage.info('已关闭连接线模式')
+  }
+}
+
+function handleMonomerClick(index, event) {
+  if (connectionMode.value) {
+    event.stopPropagation()
+    handleConnectionClick(index)
+    return
+  }
+  selectMonomer(index, event)
+}
+
+function handleConnectionClick(index) {
+  if (connectionStartIndex.value === -1) {
+    // 第一个点击：选择起点
+    connectionStartIndex.value = index
+    ElMessage.info(`已选择起点：${currentSequence.value[index]?.code}，请选择终点`)
+  } else if (connectionStartIndex.value === index) {
+    // 点击同一个：取消
+    connectionStartIndex.value = -1
+    ElMessage.info('已取消')
+  } else {
+    // 第二个点击：创建连接
+    const from = connectionStartIndex.value
+    const to = index
+    // 检查是否已存在
+    const exists = connections.value.some(
+      c => (c.from === from && c.to === to) || (c.from === to && c.to === from)
+    )
+    if (exists) {
+      ElMessage.warning('该连接已存在')
+    } else {
+      connections.value.push({ from, to, type: 'covalent' })
+      ElMessage.success(`已创建连接：${currentSequence.value[from]?.code} ↔ ${currentSequence.value[to]?.code}`)
+      drawConnections()
+    }
+    connectionStartIndex.value = -1
+  }
+}
+
+function handleMonomerMouseEnter(index) {
+  if (connectionMode.value && connectionStartIndex.value !== -1) {
+    connectionHoverIndex.value = index
+  }
+}
+
+function handleMonomerMouseLeave(index) {
+  connectionHoverIndex.value = -1
+}
+
+function updateCanvasSize() {
+  const container = sequenceDisplayRef.value
+  if (!container) return
+  canvasSize.value = {
+    width: container.offsetWidth,
+    height: container.offsetHeight
+  }
+  setTimeout(drawConnections, 0)
+}
+
+function drawConnections() {
+  const canvas = connectionCanvasRef.value
+  const container = sequenceDisplayRef.value
+  if (!canvas || !container) return
+  
+  const ctx = canvas.getContext('2d')
+  const rect = container.getBoundingClientRect()
+  
+  // 设置 canvas 尺寸
+  canvas.width = canvasSize.value.width
+  canvas.height = canvasSize.value.height
+  
+  // 清空画布
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  
+  // 绘制所有连接线
+  connections.value.forEach(conn => {
+    const fromEl = container.querySelector(`[data-monomer-index="${conn.from}"]`)
+    const toEl = container.querySelector(`[data-monomer-index="${conn.to}"]`)
+    
+    if (!fromEl || !toEl) return
+    
+    const fromRect = fromEl.getBoundingClientRect()
+    const toRect = toEl.getBoundingClientRect()
+    
+    const fromX = fromRect.left - rect.left + fromRect.width / 2
+    const fromY = fromRect.top - rect.top + fromRect.height / 2
+    const toX = toRect.left - rect.left + toRect.width / 2
+    const toY = toRect.top - rect.top + toRect.height / 2
+    
+    // 绘制曲线
+    ctx.beginPath()
+    ctx.moveTo(fromX, fromY)
+    
+    // 计算控制点，使曲线向上拱起
+    const midX = (fromX + toX) / 2
+    const midY = (fromY + toY) / 2
+    const offset = -50 // 向上偏移
+    
+    ctx.quadraticCurveTo(midX, midY + offset, toX, toY)
+    
+    ctx.strokeStyle = '#67c23a'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    
+    // 绘制箭头
+    const angle = Math.atan2(toY - (midY + offset), toX - midX)
+    const arrowLength = 10
+    ctx.beginPath()
+    ctx.moveTo(toX, toY)
+    ctx.lineTo(
+      toX - arrowLength * Math.cos(angle - Math.PI / 6),
+      toY - arrowLength * Math.sin(angle - Math.PI / 6)
+    )
+    ctx.lineTo(
+      toX - arrowLength * Math.cos(angle + Math.PI / 6),
+      toY - arrowLength * Math.sin(angle + Math.PI / 6)
+    )
+    ctx.closePath()
+    ctx.fillStyle = '#67c23a'
+    ctx.fill()
+  })
+  
+  // 绘制临时连接线（起点到悬停位置）
+  if (connectionStartIndex.value !== -1 && connectionHoverIndex.value !== -1) {
+    const fromEl = container.querySelector(`[data-monomer-index="${connectionStartIndex.value}"]`)
+    const toEl = container.querySelector(`[data-monomer-index="${connectionHoverIndex.value}"]`)
+    
+    if (fromEl && toEl) {
+      const fromRect = fromEl.getBoundingClientRect()
+      const toRect = toEl.getBoundingClientRect()
+      
+      const fromX = fromRect.left - rect.left + fromRect.width / 2
+      const fromY = fromRect.top - rect.top + fromRect.height / 2
+      const toX = toRect.left - rect.left + toRect.width / 2
+      const toY = toRect.top - rect.top + toRect.height / 2
+      
+      ctx.beginPath()
+      ctx.moveTo(fromX, fromY)
+      ctx.lineTo(toX, toY)
+      ctx.strokeStyle = '#909399'
+      ctx.lineWidth = 1
+      ctx.setLineDash([5, 5])
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
   }
 }
 
@@ -604,24 +810,37 @@ function deleteSelected() {
   const indices = Array.from(selectedIndices.value).sort((a, b) => b - a)
   indices.forEach(index => {
     currentSequence.value.splice(index, 1)
+    // 删除相关连接
+    connections.value = connections.value.filter(
+      c => c.from !== index && c.to !== index
+    )
+    // 更新连接索引
+    connections.value.forEach(c => {
+      if (c.from > index) c.from--
+      if (c.to > index) c.to--
+    })
   })
   // 更新位置
   currentSequence.value.forEach((m, i) => m.position = i + 1)
   selectedIndices.value.clear()
   selectedIndex.value = -1
   updateHELMOutput()
+  drawConnections()
   ElMessage.success(`已删除 ${indices.length} 个单体`)
 }
 
 function clearCanvas() {
-  if (currentSequence.value.length === 0) return
+  if (currentSequence.value.length === 0 && connections.value.length === 0) return
   
   saveToHistory()
   currentSequence.value = []
+  connections.value = []
   helmInput.value = ''
   helmOutput.value = ''
   selectedIndex.value = -1
   selectedIndices.value.clear()
+  connectionStartIndex.value = -1
+  drawConnections()
   ElMessage.success('画布已清空')
 }
 
@@ -822,7 +1041,13 @@ function updateHELMOutput() {
       type: polymerType.value,
       index: 1,
       monomers: currentSequence.value
-    }]
+    }],
+    connections: connections.value.map(c => ({
+      source: `PEPTIDE1`,
+      sourceBond: c.from + 1, // HELM 使用 1-based 索引
+      target: `PEPTIDE1`,
+      targetBond: c.to + 1
+    }))
   })
 }
 
@@ -836,9 +1061,14 @@ function getMonomerClass(type) {
 
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
+  // 初始化 canvas 尺寸
+  setTimeout(updateCanvasSize, 100)
+  // 窗口大小改变时更新
+  window.addEventListener('resize', updateCanvasSize)
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
+  window.removeEventListener('resize', updateCanvasSize)
   if (marqueeMoveHandler) {
     window.removeEventListener('pointermove', marqueeMoveHandler)
     marqueeMoveHandler = null
@@ -927,11 +1157,33 @@ saveToHistory()
   min-height: 60px;
 }
 
+.connection-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
 .sequence-display--marquee {
   cursor: crosshair;
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
+}
+
+.sequence-display--connection {
+  cursor: pointer;
+}
+
+.connection-source {
+  box-shadow: 0 0 0 2px #67c23a !important;
+  background: #f0f9eb !important;
+}
+
+.connection-hover {
+  box-shadow: 0 0 0 2px #909399 !important;
+  opacity: 0.8;
 }
 
 .marquee-box {
