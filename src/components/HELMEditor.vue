@@ -27,15 +27,22 @@
       </div>
       
       <div class="toolbar-group">
-        <el-button @click="toggleMultiSelect"  :type="isMultiSelectMode ? 'primary' : ''">
-          多选模式：{{ isMultiSelectMode ? '开' : '关' }}
+        <el-button @click="setCanvasMode('manual')" :type="canvasMode === 'manual' ? 'primary' : ''">
+          Manual
         </el-button>
         <el-button
-          @click="toggleMarqueeMode"
-          :type="isMarqueeMode ? 'primary' : ''"
+          @click="setCanvasMode('select')"
+          :type="canvasMode === 'select' ? 'primary' : ''"
           :icon="Pointer"
         >
           Select
+        </el-button>
+        <el-button
+          @click="setCanvasMode('drag')"
+          :type="canvasMode === 'drag' ? 'primary' : ''"
+          :icon="Pointer"
+        >
+          Drag
         </el-button>
         <el-button
           @click="toggleConnectionMode"
@@ -85,13 +92,37 @@
       <div class="canvas-area">
         <!-- 结构式 Canvas -->
         <div class="structure-view">
-          <h3>结构式</h3>
+          <div class="structure-header">
+            <h3>结构式</h3>
+            <el-button size="small" @click="showSVG = !showSVG">
+              {{ showSVG ? '隐藏' : '查看' }} SVG
+            </el-button>
+          </div>
           <StructureCanvas
             ref="structureCanvasRef"
             :sequence="currentSequence"
             :polymer-type="polymerType"
             :connections="connections"
+            :canvas-mode="canvasMode"
+            :monomer-positions="monomerPositions"
             @monomer-select="handleCanvasMonomerSelect"
+            @monomer-select-region="handleCanvasRegionSelect"
+            @update:selected-indices="handleCanvasDeleteRequest"
+            @monomer-paste="handleCanvasPaste"
+            @monomer-move="handleMonomerMove"
+            @update:monomer-positions="handleMonomerPositionsUpdate"
+          />
+          <StructureSVG
+            v-if="showSVG"
+            :sequence="currentSequence"
+            :polymer-type="polymerType"
+            :connections="connections"
+            :monomer-positions="monomerPositions"
+            :selected-index="selectedIndex"
+            :selected-indices="selectedIndices"
+            :width="768"
+            :height="300"
+            @monomer-click="handleSVGMonomerClick"
           />
         </div>
         
@@ -205,6 +236,7 @@ import helmParser, {
   calculateMass
 } from '../utils/helmParser'
 import StructureCanvas from './StructureCanvas.vue'
+import StructureSVG from './StructureSVG.vue'
 
 // 状态
 const currentSequence = ref([])
@@ -212,6 +244,9 @@ const selectedIndex = ref(-1)
 const selectedIndices = ref(new Set())
 const isMultiSelectMode = ref(false)
 const isMarqueeMode = ref(false)
+const canvasMode = ref('manual') // 'manual' | 'select' | 'drag'
+const monomerPositions = ref({}) // 存储每个单体的独立位置
+const showSVG = ref(false) // 显示 SVG 视图
 const sequenceDisplayRef = ref(null)
 const connectionCanvasRef = ref(null)
 const structureCanvasRef = ref(null)
@@ -283,6 +318,8 @@ function newMolecule() {
   helmOutput.value = ''
   selectedIndex.value = -1
   connectionStartIndex.value = -1
+  // 清除 Canvas 选中状态
+  structureCanvasRef.value?.clearSelection()
   drawConnections()
 }
 
@@ -552,14 +589,29 @@ function toggleMultiSelect() {
   ElMessage.success(isMultiSelectMode.value ? '已开启多选模式' : '已关闭多选模式')
 }
 
-function toggleMarqueeMode() {
-  isMarqueeMode.value = !isMarqueeMode.value
-  marqueeDragging.value = false
-  if (isMarqueeMode.value) {
-    ElMessage.success('框选：在序列区域拖拽划定范围；Delete 删除选中')
-  } else {
-    ElMessage.info('已关闭框选')
-  }
+function setCanvasMode(mode) {
+  canvasMode.value = mode
+  selectedIndices.value.clear()
+  selectedIndex.value = -1
+  // 清除 Canvas 选中状态
+  structureCanvasRef.value?.clearSelection()
+  const modeNames = { manual: '手动', select: '选择', drag: '拖拽' }
+  ElMessage.success(`已切换到${modeNames[mode]}模式`)
+}
+
+function handleMonomerMove({ index, x, y }) {
+  // 单体移动处理
+}
+
+function handleMonomerPositionsUpdate(positions) {
+  monomerPositions.value = positions
+}
+
+function handleSVGMonomerClick(index) {
+  // SVG 点击同步选中状态
+  selectedIndex.value = index
+  selectedIndices.value.clear()
+  selectedIndices.value.add(index)
 }
 
 function toggleConnectionMode() {
@@ -805,6 +857,9 @@ function handleMarqueePointerDown(event) {
 }
 
 function onGlobalKeydown(event) {
+  // 在 select 模式下，Canvas 会处理键盘事件
+  if (canvasMode.value === 'select') return
+  
   if (event.key !== 'Delete' && event.key !== 'Backspace') return
   const t = event.target
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
@@ -822,6 +877,8 @@ function deleteSelected() {
   saveToHistory()
   // 从后往前删除，避免索引偏移
   const indices = Array.from(selectedIndices.value).sort((a, b) => b - a)
+  const indicesSet = new Set(indices)
+  
   indices.forEach(index => {
     currentSequence.value.splice(index, 1)
     // 删除相关连接
@@ -834,10 +891,19 @@ function deleteSelected() {
       if (c.to > index) c.to--
     })
   })
+  
+  // 清除单体位置信息
+  indices.forEach(index => {
+    delete monomerPositions.value[index]
+  })
+  
   // 更新位置
   currentSequence.value.forEach((m, i) => m.position = i + 1)
+  
+  // 清除选中状态（不切换模式）
   selectedIndices.value.clear()
   selectedIndex.value = -1
+  
   updateHELMOutput()
   drawConnections()
   ElMessage.success(`已删除 ${indices.length} 个单体`)
@@ -854,6 +920,8 @@ function clearCanvas() {
   selectedIndex.value = -1
   selectedIndices.value.clear()
   connectionStartIndex.value = -1
+  // 清除 Canvas 选中状态
+  structureCanvasRef.value?.clearSelection()
   drawConnections()
   ElMessage.success('画布已清空')
 }
@@ -1075,9 +1143,82 @@ function getMonomerClass(type) {
 
 function handleCanvasMonomerSelect(index) {
   // Canvas 点击选中同步到序列视图
+  // 不切换模式，保持当前模式
   selectedIndex.value = index
   selectedIndices.value.clear()
   selectedIndices.value.add(index)
+}
+
+function handleCanvasRegionSelect(indices) {
+  // Canvas 矩形选择同步到序列视图
+  selectedIndices.value = new Set(indices)
+  selectedIndex.value = indices.length > 0 ? indices[indices.length - 1] : -1
+}
+
+function handleCanvasDeleteRequest(indices) {
+  // Canvas 请求删除选中的单体
+  if (indices.length === 0) return
+  
+  saveToHistory()
+  
+  // 将索引转换为 Set 以便快速查找
+  const indicesSet = new Set(indices)
+  
+  // 从后往前删除单体，避免索引偏移
+  const sortedIndices = [...indices].sort((a, b) => b - a)
+  sortedIndices.forEach(index => {
+    currentSequence.value.splice(index, 1)
+  })
+  
+  // 过滤掉与删除元素相关的连接，并更新剩余连接的索引
+  const newConnections = []
+  connections.value.forEach(conn => {
+    // 如果连接的任一端是要删除的元素，则跳过
+    if (indicesSet.has(conn.from) || indicesSet.has(conn.to)) {
+      return
+    }
+    // 计算新的索引：减去删除元素中比当前索引小的数量
+    const fromShift = indices.filter(i => i < conn.from).length
+    const toShift = indices.filter(i => i < conn.to).length
+    newConnections.push({
+      from: conn.from - fromShift,
+      to: conn.to - toShift,
+      type: conn.type
+    })
+  })
+  connections.value = newConnections
+  
+  // 清除单体位置信息
+  indices.forEach(index => {
+    delete monomerPositions.value[index]
+  })
+  
+  // 更新位置
+  currentSequence.value.forEach((m, i) => m.position = i + 1)
+  
+  // 清除选中状态（不切换模式）
+  selectedIndices.value.clear()
+  selectedIndex.value = -1
+  
+  updateHELMOutput()
+  drawConnections()
+  ElMessage.success(`已删除 ${indices.length} 个单体`)
+}
+
+function handleCanvasPaste(monomers) {
+  // Canvas 请求粘贴单体
+  saveToHistory()
+  const pt = polymerType.value
+  monomers.forEach((m, i) => {
+    const monomer = {
+      ...m,
+      letter: m.letter || getHelmLetter(m, pt),
+      position: currentSequence.value.length + i + 1
+    }
+    currentSequence.value.push(monomer)
+  })
+  updateHELMOutput()
+  ElMessage.success(`已粘贴 ${monomers.length} 个单体`)
 }
 
 // 同步选中状态到 Canvas
@@ -1172,10 +1313,17 @@ saveToHistory()
   min-height: 300px;
 }
 
-.structure-view h3 {
+.structure-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.structure-header h3 {
   font-size: 14px;
   color: #606266;
-  margin: 0 0 12px 0;
+  margin: 0;
 }
 
 .sequence-view {
