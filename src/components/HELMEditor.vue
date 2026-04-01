@@ -83,6 +83,18 @@
       
       <!-- 中间画布区 -->
       <div class="canvas-area">
+        <!-- 结构式 Canvas -->
+        <div class="structure-view">
+          <h3>结构式</h3>
+          <StructureCanvas
+            ref="structureCanvasRef"
+            :sequence="currentSequence"
+            :polymer-type="polymerType"
+            :connections="connections"
+            @monomer-select="handleCanvasMonomerSelect"
+          />
+        </div>
+        
         <div class="sequence-view">
           <h3>序列视图</h3>
           <div 
@@ -176,7 +188,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { 
   Plus, FolderOpened, Download, Document, 
   RefreshLeft, RefreshRight, Close, Delete, Pointer, Connection
@@ -192,6 +204,7 @@ import helmParser, {
   parseMolfile,
   calculateMass
 } from '../utils/helmParser'
+import StructureCanvas from './StructureCanvas.vue'
 
 // 状态
 const currentSequence = ref([])
@@ -201,6 +214,7 @@ const isMultiSelectMode = ref(false)
 const isMarqueeMode = ref(false)
 const sequenceDisplayRef = ref(null)
 const connectionCanvasRef = ref(null)
+const structureCanvasRef = ref(null)
 const marqueeDragging = ref(false)
 const marqueeStart = ref({ x: 0, y: 0 })
 const marqueeEnd = ref({ x: 0, y: 0 })
@@ -1059,6 +1073,20 @@ function getMonomerClass(type) {
   }
 }
 
+function handleCanvasMonomerSelect(index) {
+  // Canvas 点击选中同步到序列视图
+  selectedIndex.value = index
+  selectedIndices.value.clear()
+  selectedIndices.value.add(index)
+}
+
+// 同步选中状态到 Canvas
+watch([selectedIndex, currentSequence, polymerType, connections], () => {
+  if (structureCanvasRef.value) {
+    structureCanvasRef.value.render()
+  }
+}, { deep: true })
+
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
   // 初始化 canvas 尺寸
@@ -1135,6 +1163,19 @@ saveToHistory()
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.structure-view {
+  background: #fff;
+  border-radius: 4px;
+  padding: 16px;
+  min-height: 300px;
+}
+
+.structure-view h3 {
+  font-size: 14px;
+  color: #606266;
+  margin: 0 0 12px 0;
 }
 
 .sequence-view {
