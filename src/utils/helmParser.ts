@@ -1,14 +1,82 @@
 /**
  * HELM (Hierarchical Editing Language for Macromolecules) 解析器
- * 
+ *
  * HELM 是一种用于表示生物大分子的线性符号系统
  * 支持：蛋白质、核酸、化学修饰、复合物等
- * 
+ *
  * 参考：https://github.com/PistoiaHELM/HELM1
  */
 
+// 类型定义
+export interface AminoAcid {
+  name: string
+  code: string
+  formula: string
+  mass: number
+  letter?: string
+  position?: number
+  type?: string
+  modified?: boolean
+}
+
+export interface Nucleotide {
+  name: string
+  code: string
+  type: string
+  letter?: string
+  position?: number
+  modified?: boolean
+}
+
+export interface Monomer {
+  name: string
+  code: string
+  formula?: string
+  mass?: number
+  letter: string
+  position: number
+  type: string
+  modified: boolean
+}
+
+export interface Polymer {
+  type: string
+  index: number
+  name: string
+  sequence: Monomer[]
+  modifications: string[]
+  monomers?: Monomer[]
+}
+
+export interface Connection {
+  source: string
+  sourceBond: string | number
+  target: string
+  targetBond: string | number
+  from?: number
+  to?: number
+  type?: string
+}
+
+export interface HELMStructure {
+  polymers: Polymer[]
+  chemicals: string[]
+  connections: Connection[]
+  metadata: Record<string, unknown>
+}
+
+export interface ValidationResult {
+  valid: boolean
+  errors: string[]
+}
+
+export interface ParsedSequence {
+  type: 'PEPTIDE' | 'RNA' | 'DNA'
+  sequence: string
+}
+
 // HELM 单体缩写映射
-const AMINO_ACIDS = {
+export const AMINO_ACIDS: Record<string, AminoAcid> = {
   'A': { name: 'Alanine', code: 'ALA', formula: 'C3H7NO2', mass: 89.09 },
   'R': { name: 'Arginine', code: 'ARG', formula: 'C6H14N4O2', mass: 174.20 },
   'N': { name: 'Asparagine', code: 'ASN', formula: 'C4H8N2O3', mass: 132.12 },
@@ -31,7 +99,7 @@ const AMINO_ACIDS = {
   'V': { name: 'Valine', code: 'VAL', formula: 'C5H11NO2', mass: 117.15 }
 }
 
-const NUCLEOTIDES = {
+export const NUCLEOTIDES: Record<string, Nucleotide> = {
   'A': { name: 'Adenine', code: 'A', type: 'RNA' },
   'U': { name: 'Uracil', code: 'U', type: 'RNA' },
   'G': { name: 'Guanine', code: 'G', type: 'RNA' },
@@ -40,14 +108,14 @@ const NUCLEOTIDES = {
 }
 
 /** 三字母 -> 单字母（HELM 聚合物花括号内应为单字母序列） */
-const THREE_LETTER_TO_ONE_LETTER = Object.fromEntries(
+const THREE_LETTER_TO_ONE_LETTER: Record<string, string> = Object.fromEntries(
   Object.entries(AMINO_ACIDS).map(([letter, data]) => [data.code, letter])
 )
 
 /**
  * 用于 HELM 字符串、SMILES 映射的单体符号：肽为单字母，核酸为 A/C/G/T/U
  */
-export function getHelmLetter(monomer, polymerType) {
+export function getHelmLetter(monomer: Monomer | AminoAcid | Nucleotide | null, polymerType: string): string {
   if (!monomer) return ''
   if (polymerType === 'RNA' || polymerType === 'DNA') {
     const c = String(monomer.code ?? '').toUpperCase()
@@ -65,7 +133,7 @@ export function getHelmLetter(monomer, polymerType) {
 }
 
 // 轻量级映射：用于编辑器中的 SMILES/Molfile 占位导出与回读
-const AMINO_SMILES = {
+const AMINO_SMILES: Record<string, string> = {
   A: 'N[C@@H](C)C(=O)O',
   R: 'N[C@@H](CCCNC(N)=N)C(=O)O',
   N: 'N[C@@H](CC(=O)N)C(=O)O',
@@ -88,7 +156,7 @@ const AMINO_SMILES = {
   V: 'N[C@@H](C(C)C)C(=O)O'
 }
 
-const NUCLEOTIDE_SMILES = {
+const NUCLEOTIDE_SMILES: Record<string, string> = {
   A: 'Nc1ncnc2n(cnc12)[C@H]1O[C@@H](CO)[C@H](O)[C@@H]1O',
   U: 'O=c1[nH]cc(=O)[nH]1[C@H]1O[C@@H](CO)[C@H](O)[C@@H]1O',
   G: 'Nc1nc2[nH]cnc2c(=O)[nH]1[C@H]1O[C@@H](CO)[C@H](O)[C@@H]1O',
@@ -96,21 +164,21 @@ const NUCLEOTIDE_SMILES = {
   T: 'CC1=CN([C@H]2O[C@@H](CO)[C@H](O)[C@@H]2O)C(=O)NC1=O'
 }
 
-const REVERSE_AMINO_SMILES = Object.fromEntries(
+const REVERSE_AMINO_SMILES: Record<string, string> = Object.fromEntries(
   Object.entries(AMINO_SMILES).map(([code, smiles]) => [smiles, code])
 )
 
-const REVERSE_NUCLEOTIDE_SMILES = Object.fromEntries(
+const REVERSE_NUCLEOTIDE_SMILES: Record<string, string> = Object.fromEntries(
   Object.entries(NUCLEOTIDE_SMILES).map(([code, smiles]) => [smiles, code])
 )
 
 /**
  * 解析 HELM 字符串
- * @param {string} helmString - HELM 格式字符串
- * @returns {Object} 解析后的结构
+ * @param helmString - HELM 格式字符串
+ * @returns 解析后的结构
  */
-export function parseHELM(helmString) {
-  const result = {
+export function parseHELM(helmString: string): HELMStructure {
+  const result: HELMStructure = {
     polymers: [],
     chemicals: [],
     connections: [],
@@ -119,18 +187,18 @@ export function parseHELM(helmString) {
 
   // 移除空白
   const cleaned = helmString.trim()
-  
+
   // 分割不同的 HELM 段
   const segments = cleaned.split('$')
-  
+
   for (const segment of segments) {
     if (!segment.trim()) continue
-    
+
     // 解析聚合物链 (PEPTIDE1, RNA1, DNA1 等)
     const polymerMatch = segment.match(/^(PEPTIDE|RNA|DNA|CHEM)(\d+)\{([^}]*)\}/)
     if (polymerMatch) {
       const [, type, index, sequence] = polymerMatch
-      const polymer = {
+      const polymer: Polymer = {
         type,
         index: parseInt(index),
         name: `${type}${index}`,
@@ -139,7 +207,7 @@ export function parseHELM(helmString) {
       }
       result.polymers.push(polymer)
     }
-    
+
     // 解析连接
     const connMatch = segment.match(/(\w+\d+):(\d+)-(\d+):(\w+\d+):(\d+)-(\d+)/)
     if (connMatch) {
@@ -151,29 +219,29 @@ export function parseHELM(helmString) {
       })
     }
   }
-  
+
   return result
 }
 
 /**
  * 解析序列
- * @param {string} sequence - 原始序列字符串
- * @param {string} type - 聚合物类型
- * @returns {Array} 解析后的单体数组
+ * @param sequence - 原始序列字符串
+ * @param type - 聚合物类型
+ * @returns 解析后的单体数组
  */
-function parseSequence(sequence, type) {
-  const monomers = []
+function parseSequence(sequence: string, type: string): Monomer[] {
+  const monomers: Monomer[] = []
   let i = 0
-  
+
   while (i < sequence.length) {
     const char = sequence[i]
-    
+
     // 跳过特殊字符
     if (char === '(' || char === ')' || char === '[' || char === ']') {
       i++
       continue
     }
-    
+
     // 解析单体
     if (type === 'PEPTIDE') {
       const aminoAcid = AMINO_ACIDS[char.toUpperCase()]
@@ -182,6 +250,7 @@ function parseSequence(sequence, type) {
           position: monomers.length + 1,
           letter: char.toUpperCase(),
           ...aminoAcid,
+          type: 'PEPTIDE',
           modified: false
         })
       }
@@ -192,76 +261,77 @@ function parseSequence(sequence, type) {
           position: monomers.length + 1,
           letter: char.toUpperCase(),
           ...nucleotide,
+          type: type,
           modified: false
         })
       }
     }
-    
+
     i++
   }
-  
+
   return monomers
 }
 
 /**
  * 将结构转换为 HELM 字符串
- * @param {Object} structure - 结构对象
- * @returns {string} HELM 格式字符串
+ * @param structure - 结构对象
+ * @returns HELM 格式字符串
  */
-export function toHELM(structure) {
-  const segments = []
-  
+export function toHELM(structure: { polymers?: Polymer[]; connections?: Connection[] }): string {
+  const segments: string[] = []
+
   // 生成聚合物段
   if (structure.polymers) {
     for (const polymer of structure.polymers) {
-      const sequence = polymer.monomers
-        .map((m) => getHelmLetter(m, polymer.type))
+      const monomers = polymer.monomers || polymer.sequence
+      const sequence = monomers
+        .map((m: Monomer) => getHelmLetter(m, polymer.type))
         .join('')
       segments.push(`${polymer.type}${polymer.index}{${sequence}}`)
     }
   }
-  
+
   // 生成连接段
   if (structure.connections) {
     for (const conn of structure.connections) {
       segments.push(`${conn.source}:${conn.sourceBond}-${conn.sourceBond}:${conn.target}:${conn.targetBond}-${conn.targetBond}`)
     }
   }
-  
+
   return segments.join('$')
 }
 
 /**
  * 计算分子量
- * @param {Array} monomers - 单体数组
- * @returns {number} 总分子量
+ * @param monomers - 单体数组
+ * @returns 总分子量
  */
-export function calculateMass(monomers) {
+export function calculateMass(monomers: Monomer[]): number {
   return monomers.reduce((sum, m) => sum + (m.mass || 0), 0)
 }
 
-export function toSMILES(monomers, type = 'PEPTIDE') {
+export function toSMILES(monomers: Monomer[], type: string = 'PEPTIDE'): string {
   const mapping = type === 'PEPTIDE' ? AMINO_SMILES : NUCLEOTIDE_SMILES
   return monomers
-    .map((m) => {
+    .map((m: Monomer) => {
       const sym = getHelmLetter(m, type)
       return mapping[sym] || m.code
     })
     .join('.')
 }
 
-export function parseSMILES(smiles) {
+export function parseSMILES(smiles: string): ParsedSequence | null {
   const raw = (smiles || '').trim()
   if (!raw) return null
 
   const lines = raw
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    .map((line: string) => line.trim())
     .filter(Boolean)
 
   let metaType = ''
   let metaSequence = ''
-  const smilesLines = []
 
   for (const line of lines) {
     if (line.startsWith('#')) {
@@ -275,21 +345,20 @@ export function parseSMILES(smiles) {
       }
       continue
     }
-    smilesLines.push(line)
   }
 
   if (metaType && metaSequence) {
-    return { type: metaType, sequence: metaSequence }
+    return { type: metaType as 'PEPTIDE' | 'RNA' | 'DNA', sequence: metaSequence }
   }
 
-  const cleaned = smilesLines.join('').trim()
+  const cleaned = lines.join('').trim()
   if (!cleaned) return null
 
   // 支持点分单体 SMILES
-  const parts = cleaned.split('.').map((p) => p.trim()).filter(Boolean)
+  const parts = cleaned.split('.').map((p: string) => p.trim()).filter(Boolean)
   if (parts.length > 1) {
-    const peptideCodes = []
-    const nucCodes = []
+    const peptideCodes: string[] = []
+    const nucCodes: string[] = []
 
     for (const part of parts) {
       if (REVERSE_AMINO_SMILES[part]) {
@@ -305,7 +374,7 @@ export function parseSMILES(smiles) {
 
     // 全部被双重识别（如 A/C/G/T）：默认按核酸，减少核酸 round-trip 偏差
     const allDual = parts.every(
-      (part) => REVERSE_AMINO_SMILES[part] && REVERSE_NUCLEOTIDE_SMILES[part]
+      (part: string) => REVERSE_AMINO_SMILES[part] && REVERSE_NUCLEOTIDE_SMILES[part]
     )
     if (allDual && nucCodes.length === parts.length) {
       const type = nucCodes.includes('U') ? 'RNA' : 'DNA'
@@ -333,8 +402,8 @@ export function parseSMILES(smiles) {
   return null
 }
 
-export function toMolfile(monomers, type = 'PEPTIDE') {
-  const sequence = monomers.map((m) => getHelmLetter(m, type)).join('')
+export function toMolfile(monomers: Monomer[], type: string = 'PEPTIDE'): string {
+  const sequence = monomers.map((m: Monomer) => getHelmLetter(m, type)).join('')
   const smiles = toSMILES(monomers, type)
   return [
     'HELM2-MACROMOLECULE',
@@ -354,7 +423,7 @@ export function toMolfile(monomers, type = 'PEPTIDE') {
   ].join('\n')
 }
 
-export function parseMolfile(molfileText) {
+export function parseMolfile(molfileText: string): ParsedSequence | null {
   const text = (molfileText || '').trim()
   if (!text) return null
 
@@ -371,7 +440,7 @@ export function parseMolfile(molfileText) {
       else if (/^[ACGTU]+$/i.test(sequence)) type = sequence.includes('U') ? 'RNA' : 'DNA'
       else type = 'PEPTIDE'
     }
-    return { type, sequence }
+    return { type: type as 'PEPTIDE' | 'RNA' | 'DNA', sequence }
   }
 
   if (smilesMatch) {
@@ -383,22 +452,22 @@ export function parseMolfile(molfileText) {
 
 /**
  * 验证 HELM 字符串
- * @param {string} helmString - HELM 格式字符串
- * @returns {Object} { valid: boolean, errors: Array }
+ * @param helmString - HELM 格式字符串
+ * @returns 验证结果
  */
-export function validateHELM(helmString) {
-  const errors = []
-  
+export function validateHELM(helmString: string): ValidationResult {
+  const errors: string[] = []
+
   if (!helmString || typeof helmString !== 'string') {
     errors.push('HELM 字符串不能为空')
     return { valid: false, errors }
   }
-  
+
   // 基本格式检查
   if (!helmString.includes('{') || !helmString.includes('}')) {
     errors.push('缺少聚合物定义花括号')
   }
-  
+
   return {
     valid: errors.length === 0,
     errors
