@@ -226,36 +226,30 @@ function handleMonomerClick(index, event) {
   emit('monomer-click', index, event)
 }
 
-// 下载 SVG 为 PNG 图片
+// 下载 SVG 文件
 function downloadSVG() {
   const svgElement = document.querySelector('.structure-svg svg')
   if (!svgElement) return
   
+  // 添加白色背景
+  const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect')
+  bgRect.setAttribute('width', '100%')
+  bgRect.setAttribute('height', '100%')
+  bgRect.setAttribute('fill', '#ffffff')
+  svgElement.insertBefore(bgRect, svgElement.firstChild)
+  
   const svgData = new XMLSerializer().serializeToString(svgElement)
+  // 移除背景 rect
+  svgElement.removeChild(bgRect)
+  
   const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' })
   const url = URL.createObjectURL(svgBlob)
   
-  const img = new Image()
-  img.onload = () => {
-    const canvas = document.createElement('canvas')
-    canvas.width = img.width * 2 // 2x 分辨率
-    canvas.height = img.height * 2
-    const ctx = canvas.getContext('2d')
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-    
-    canvas.toBlob((blob) => {
-      const link = document.createElement('a')
-      link.href = URL.createObjectURL(blob)
-      link.download = `molecule-${Date.now()}.png`
-      link.click()
-      URL.revokeObjectURL(link.href)
-    }, 'image/png')
-    
-    URL.revokeObjectURL(url)
-  }
-  img.src = url
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `molecule-${Date.now()}.svg`
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 function handleMonomerHover(index) {
