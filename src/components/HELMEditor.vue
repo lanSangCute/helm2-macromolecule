@@ -52,36 +52,40 @@
     <!-- 主编辑区 -->
     <div class="editor-container">
       <!-- 左侧单体库 -->
-      <el-card shadow="never" class="monomer-library">
-        <template #header>氨基酸</template>
-        <div class="monomer-grid">
-          <el-button
-            v-for="aa in aminoAcids"
-            :key="aa.code"
-            @click="addMonomerFull(aa)"
-            @dragstart="handleMonomerDragStart($event, aa)"
-            draggable="true"
-            size="small"
-          >
-            {{ aa.code }}
-          </el-button>
+      <div class="monomer-library">
+        <div class="monomer-section">
+          <div class="monomer-section-header">氨基酸</div>
+          <div class="monomer-grid">
+            <el-button
+              v-for="aa in aminoAcids"
+              :key="aa.code"
+              @click="addMonomerFull(aa)"
+              @dragstart="handleMonomerDragStart($event, aa)"
+              draggable="true"
+              size="small"
+            >
+              {{ aa.code }}
+            </el-button>
+          </div>
         </div>
         
-        <template #header>核苷酸</template>
-        <div class="monomer-grid">
-          <el-button
-            v-for="nt in nucleotides"
-            :key="nt.code"
-            @click="addMonomerFull(nt)"
-            @dragstart="handleMonomerDragStart($event, nt)"
-            draggable="true"
-            size="small"
-            type="success"
-          >
-            {{ nt.code }}
-          </el-button>
+        <div class="monomer-section">
+          <div class="monomer-section-header">核苷酸</div>
+          <div class="monomer-grid">
+            <el-button
+              v-for="nt in nucleotides"
+              :key="nt.code"
+              @click="addMonomerFull(nt)"
+              @dragstart="handleMonomerDragStart($event, nt)"
+              draggable="true"
+              size="small"
+              type="success"
+            >
+              {{ nt.code }}
+            </el-button>
+          </div>
         </div>
-      </el-card>
+      </div>
       
       <!-- 中间画布区 -->
       <div class="canvas-area">
@@ -186,7 +190,7 @@
               :style="marqueeBoxStyle"
             />
           </div>
-        </div>
+        </el-card>
         
         <el-card shadow="never" class="input-area">
           <el-input
@@ -197,7 +201,7 @@
             @change="parseInputFull"
           />
         </el-card>
-      </el-card>
+      </div>
       
       <!-- 右侧信息面板 -->
       <el-card shadow="never" class="info-panel">
@@ -768,12 +772,18 @@ saveToHistory()
   border-right: 1px solid #e4e7ed;
   padding: 16px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.monomer-library h3 {
+.monomer-section-header {
   font-size: 14px;
+  font-weight: 600;
   color: #606266;
-  margin: 0 0 12px 0;
+  margin: 0 0 8px 0;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ebeef5;
 }
 
 .monomer-grid {
