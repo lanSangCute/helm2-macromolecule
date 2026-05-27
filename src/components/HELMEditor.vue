@@ -44,6 +44,9 @@
         >
           Drag
         </el-button>
+        <el-button @click="serializeStrands" :icon="Rank">
+          序列化
+        </el-button>
         <el-button
           @click="toggleConnectionMode"
           :type="connectionMode ? 'success' : ''"
@@ -105,12 +108,15 @@
             :connections="connections"
             :canvas-mode="canvasMode"
             :monomer-positions="monomerPositions"
+            :connection-mode="connectionMode"
+            :connection-start-index="connectionStartIndex"
             @monomer-select="handleCanvasMonomerSelect"
             @monomer-select-region="handleCanvasRegionSelect"
             @update:selected-indices="handleCanvasDeleteRequest"
             @monomer-paste="handleCanvasPaste"
             @monomer-move="handleMonomerMove"
             @update:monomer-positions="handleMonomerPositionsUpdate"
+            @connection-click="handleConnectionClick"
           />
           <StructureSVG
             v-if="showSVG"
@@ -218,58 +224,129 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { 
   Plus, FolderOpened, Download, Document, 
-  RefreshLeft, RefreshRight, Close, Delete, Pointer, Connection
+  RefreshLeft, RefreshRight, Close, Delete, Pointer, Connection, Rank
 } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import helmParser, {
-  parseHELM,
-  toHELM,
   getHelmLetter,
-  toSMILES,
-  parseSMILES,
-  toMolfile,
-  parseMolfile,
   calculateMass
 } from '../utils/helmParser'
 import StructureCanvas from './StructureCanvas.vue'
 import StructureSVG from './StructureSVG.vue'
 
-// 状态
-const currentSequence = ref([])
-const selectedIndex = ref(-1)
-const selectedIndices = ref(new Set())
-const isMultiSelectMode = ref(false)
-const isMarqueeMode = ref(false)
-const canvasMode = ref('manual') // 'manual' | 'select' | 'drag'
-const monomerPositions = ref({}) // 存储每个单体的独立位置
-const showSVG = ref(false) // 显示 SVG 视图
-const sequenceDisplayRef = ref(null)
-const connectionCanvasRef = ref(null)
-const structureCanvasRef = ref(null)
-const marqueeDragging = ref(false)
-const marqueeStart = ref({ x: 0, y: 0 })
-const marqueeEnd = ref({ x: 0, y: 0 })
-const dragOverIndex = ref(-1)
-const isDragging = ref(false)
-const draggedMonomer = ref(null)
-const helmInput = ref('')
-const helmOutput = ref('')
-const polymerType = ref('PEPTIDE')
-const history = ref([])
-const historyIndex = ref(-1)
-const fileInputRef = ref(null)
-// 连接线相关
-const connections = ref([]) // { from: number, to: number, type: string }
-const connectionMode = ref(false)
-const connectionStartIndex = ref(-1)
-const connectionHoverIndex = ref(-1)
-const canvasSize = ref({ width: 0, height: 0 })
+// ===== Composables =====
+import { useSequence } from '../composables/use-sequence'
+import { useSelection } from '../composables/use-selection'
+import { useConnections } from '../composables/use-connections'
+import { useCanvasMode } from '../composables/use-canvas-mode'
+import { useDragDrop } from '../composables/use-drag-drop'
+import { useHELMIO } from '../composables/use-helm-io'
+import { useMarquee } from '../composables/use-marquee'
+import { useStrandLayout } from '../composables/use-strand-layout'
 
-// 单体库
+// --- Sequence Management / 序列管理 ---
+const {
+  currentSequence,
+  polymerType,
+  history,
+  historyIndex,
+  saveToHistory,
+  addMonomer,
+  removeMonomer,
+  newMolecule,
+  undo,
+  redo
+} = useSequence()
+
+// --- Selection Management / 选中管理 ---
+const {
+  selectedIndex,
+  selectedIndices,
+  isMultiSelectMode,
+  isMarqueeMode,
+  selectMonomer,
+  toggleMultiSelect,
+  clearSelection
+} = useSelection()
+
+// --- Connection Management / 连接线管理 ---
+const {
+  connections,
+  connectionMode,
+  connectionStartIndex,
+  connectionHoverIndex,
+  toggleConnectionMode,
+  handleConnectionClick,
+  handleMonomerMouseEnter,
+  handleMonomerMouseLeave
+} = useConnections()
+
+// --- Canvas Mode Management / 画布模式管理 ---
+const {
+  canvasMode,
+  setCanvasMode
+} = useCanvasMode()
+
+// --- Drag & Drop Management / 拖拽管理 ---
+const {
+  dragOverIndex,
+  isDragging,
+  draggedMonomer,
+  handleMonomerDragStart,
+  handleDragStart,
+  handleDragEnd,
+  handleDragOver,
+  handleDragLeave,
+  handleDrop,
+  handleSequenceDragOver,
+  handleSequenceDrop
+} = useDragDrop({ currentSequence, polymerType, selectedIndices, saveToHistory })
+
+// --- HELM I/O Management / HELM 输入输出管理 ---
+const {
+  helmInput,
+  helmOutput,
+  saveHELM,
+  exportFormat,
+  parseInput,
+  updateHELMOutput,
+  loadHELM,
+  applyParsedSequence,
+  downloadTextFile
+} = useHELMIO({ currentSequence, polymerType, connections, saveToHistory })
+
+// --- Marquee Management / 框选管理 ---
+const {
+  marqueeDragging,
+  marqueeStart,
+  marqueeEnd,
+  handleMarqueePointerDown,
+  cleanup: marqueeCleanup
+} = useMarquee({ isMarqueeMode, selectedIndex, selectedIndices })
+
+// --- Strand Layout Management / 链布局管理 ---
+const monomerPositions = ref<Record<number, { x: number; y: number }>>({})
+const structureCanvasRef = ref<InstanceType<typeof StructureCanvas> | null>(null)
+
+const { serializeStrands } = useStrandLayout({
+  currentSequence,
+  connections,
+  monomerPositions,
+  structureCanvasRef
+})
+
+// --- Component-specific refs / 组件特有引用 ---
+const sequenceDisplayRef = ref<HTMLDivElement | null>(null)
+const connectionCanvasRef = ref<HTMLCanvasElement | null>(null)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const canvasSize = ref({ width: 0, height: 0 })
+const showSVG = ref(false)
+
+// --- Monomer Library / 单体库 ---
 const aminoAcids = Object.values(helmParser.AMINO_ACIDS).map(aa => ({
   ...aa,
   type: 'PEPTIDE'
@@ -280,407 +357,131 @@ const nucleotides = Object.values(helmParser.NUCLEOTIDES).map(nt => ({
   type: nt.type
 }))
 
-// 计算属性
-const calculatedMass = computed(() => {
-  return calculateMass(currentSequence.value).toFixed(2)
-})
+// --- Computed Properties / 计算属性 ---
+const calculatedMass = computed(() => calculateMass(currentSequence.value).toFixed(2))
 
 const marqueeBoxStyle = computed(() => {
-  const x1 = marqueeStart.value.x
-  const x2 = marqueeEnd.value.x
-  const y1 = marqueeStart.value.y
-  const y2 = marqueeEnd.value.y
+  const x1 = marqueeStart.value.x, x2 = marqueeEnd.value.x
+  const y1 = marqueeStart.value.y, y2 = marqueeEnd.value.y
   const left = Math.min(x1, x2)
   const top = Math.min(y1, y2)
   const width = Math.abs(x2 - x1)
   const height = Math.abs(y2 - y1)
-  return {
-    left: `${left}px`,
-    top: `${top}px`,
-    width: `${width}px`,
-    height: `${height}px`
-  }
+  return { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` }
 })
 
-const canvasStyle = computed(() => {
-  return {
-    width: `${canvasSize.value.width}px`,
-    height: `${canvasSize.value.height}px`
-  }
-})
+const canvasStyle = computed(() => ({
+  width: `${canvasSize.value.width}px`,
+  height: `${canvasSize.value.height}px`
+}))
 
-// 方法
-function newMolecule() {
-  saveToHistory()
-  currentSequence.value = []
-  connections.value = []
-  helmInput.value = ''
-  helmOutput.value = ''
-  selectedIndex.value = -1
-  connectionStartIndex.value = -1
-  // 清除 Canvas 选中状态
-  structureCanvasRef.value?.clearSelection()
-  drawConnections()
-}
+// ===== Component Methods / 组件方法 =====
 
 function openFile() {
   fileInputRef.value?.click()
 }
 
-function applyParsedSequence(type, sequence) {
-  if (!sequence) {
-    ElMessage.warning('未识别到可用序列')
-    return
-  }
-
-  let monomers = []
-  if (type === 'PEPTIDE') {
-    monomers = sequence.split('').map((char, index) => {
-      const aa = helmParser.AMINO_ACIDS[char.toUpperCase()]
-      return aa
-        ? { ...aa, type: 'PEPTIDE', letter: char.toUpperCase(), position: index + 1 }
-        : null
-    }).filter(Boolean)
-  } else if (type === 'RNA' || type === 'DNA') {
-    monomers = sequence.split('').map((char, index) => {
-      const nt = helmParser.NUCLEOTIDES[char.toUpperCase()]
-      return nt ? { ...nt, type, letter: char.toUpperCase(), position: index + 1 } : null
-    }).filter(Boolean)
-  }
-
-  if (monomers.length === 0) {
-    ElMessage.warning('文件内容无法转换为当前支持的单体序列')
-    return
-  }
-
-  saveToHistory()
-  polymerType.value = type
-  currentSequence.value = monomers
-  updateHELMOutput()
-  // 与右侧 HELM、保存文件一致：输入框同步为当前 HELM 字符串
-  helmInput.value = helmOutput.value
-}
-
-async function loadHELM(event) {
-  const file = event?.target?.files?.[0]
-  if (!file) return
-
-  try {
-    const content = await file.text()
-    const fileName = file.name.toLowerCase()
-    const text = content.trim()
-    let parsed = null
-
-    if (fileName.endsWith('.helm') || text.includes('{')) {
-      const parsedHELM = parseHELM(text)
-      if (parsedHELM.polymers.length > 0) {
-        const polymer = parsedHELM.polymers[0]
-        const helmSeq = polymer.sequence
-          .map((m) => getHelmLetter(m, polymer.type))
-          .join('')
-        applyParsedSequence(polymer.type, helmSeq)
-        ElMessage.success('HELM 文件加载成功')
-      } else {
-        ElMessage.warning('HELM 文件解析失败')
-      }
-    } else if (fileName.endsWith('.mol') || fileName.endsWith('.molfile') || text.includes('V2000')) {
-      parsed = parseMolfile(text)
-      if (parsed) {
-        applyParsedSequence(parsed.type, parsed.sequence)
-        ElMessage.success('Molfile 文件加载成功')
-      } else {
-        ElMessage.warning('Molfile 解析失败')
-      }
-    } else if (fileName.endsWith('.smi') || fileName.endsWith('.smiles')) {
-      parsed = parseSMILES(text)
-      if (parsed) {
-        applyParsedSequence(parsed.type, parsed.sequence)
-        ElMessage.success('SMILES 文件加载成功')
-      } else {
-        ElMessage.warning('SMILES 解析失败')
-      }
-    } else {
-      // 兜底自动识别：HELM > Molfile > SMILES
-      const parsedHELM = parseHELM(text)
-      if (parsedHELM.polymers.length > 0) {
-        const polymer = parsedHELM.polymers[0]
-        const helmSeq = polymer.sequence
-          .map((m) => getHelmLetter(m, polymer.type))
-          .join('')
-        applyParsedSequence(polymer.type, helmSeq)
-        ElMessage.success('文件已按 HELM 格式加载')
-      } else {
-        parsed = parseMolfile(text) || parseSMILES(text)
-        if (parsed) {
-          applyParsedSequence(parsed.type, parsed.sequence)
-          ElMessage.success('文件格式自动识别并加载成功')
-        } else {
-          ElMessage.warning('无法识别文件格式，请使用 HELM/SMILES/Molfile')
-        }
-      }
-    }
-  } catch (error) {
-    ElMessage.error(`文件读取失败：${error.message || '未知错误'}`)
-  } finally {
-    // 重置 input，允许重复选择同一文件
-    if (event?.target) {
-      event.target.value = ''
-    }
-  }
-}
-
-function saveHELM() {
-  const helm = toHELM({
-    polymers: [{
-      type: polymerType.value,
-      index: 1,
-      monomers: currentSequence.value
-    }]
-  })
-  
-  // 创建下载
-  const blob = new Blob([helm], { type: 'text/plain' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'molecule.helm'
-  a.click()
-  URL.revokeObjectURL(url)
-  
-  ElMessage.success('HELM 文件已保存')
-}
-
-function exportFormat(format) {
-  if (currentSequence.value.length === 0) {
-    ElMessage.warning('当前没有可导出的分子')
-    return
-  }
-
-  const type = polymerType.value
-  const baseName = 'molecule'
-
-  if (format === 'HELM') {
-    saveHELM()
-    return
-  }
-
-  if (format === 'SMILES') {
-    const smiles = toSMILES(currentSequence.value, type)
-    const sequence = currentSequence.value.map((m) => getHelmLetter(m, type)).join('')
-    const smilesContent = [
-      `# HELM_TYPE: ${type}`,
-      `# HELM_SEQUENCE: ${sequence}`,
-      smiles
-    ].join('\n')
-    downloadTextFile(`${baseName}.smi`, smilesContent, 'text/plain')
-    ElMessage.success('SMILES 导出成功')
-    return
-  }
-
-  if (format === 'Molfile') {
-    const molfile = toMolfile(currentSequence.value, type)
-    downloadTextFile(`${baseName}.mol`, molfile, 'chemical/x-mdl-molfile')
-    ElMessage.success('Molfile 导出成功')
-    return
-  }
-
-  ElMessage.warning(`暂不支持导出格式：${format}`)
-}
-
-function downloadTextFile(filename, content, mimeType = 'text/plain') {
-  const blob = new Blob([content], { type: mimeType })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  a.click()
-  URL.revokeObjectURL(url)
-}
-
-function undo() {
-  if (historyIndex.value > 0) {
-    historyIndex.value--
-    const state = history.value[historyIndex.value]
-    currentSequence.value = [...state.sequence]
-    connections.value = [...state.connections]
-    updateHELMOutput()
-    drawConnections()
-  }
-}
-
-function redo() {
-  if (historyIndex.value < history.value.length - 1) {
-    historyIndex.value++
-    const state = history.value[historyIndex.value]
-    currentSequence.value = [...state.sequence]
-    connections.value = [...state.connections]
-    updateHELMOutput()
-    drawConnections()
-  }
-}
-
-function saveToHistory() {
-  // 移除当前索引之后的历史
-  history.value = history.value.slice(0, historyIndex.value + 1)
-  history.value.push({
-    sequence: [...currentSequence.value],
-    connections: [...connections.value]
-  })
-  historyIndex.value = history.value.length - 1
-}
-
-function addMonomer(monomer) {
-  saveToHistory()
-  const pt = monomer.type || polymerType.value
-  currentSequence.value.push({
-    ...monomer,
-    letter: monomer.letter || getHelmLetter(monomer, pt),
-    position: currentSequence.value.length + 1
-  })
-  updateHELMOutput()
-}
-
-function removeMonomer(index) {
-  saveToHistory()
-  currentSequence.value.splice(index, 1)
-  // 更新位置
-  currentSequence.value.forEach((m, i) => m.position = i + 1)
-  updateHELMOutput()
-}
-
-function selectMonomer(index, event) {
-  if (isMarqueeMode.value) return
-  if (isMultiSelectMode.value) {
-    // 多选模式
-    if (event.shiftKey) {
-      // Shift+ 点击：范围选择
-      const start = selectedIndex.value >= 0 ? selectedIndex.value : index
-      const end = index
-      const min = Math.min(start, end)
-      const max = Math.max(start, end)
-      for (let i = min; i <= max; i++) {
-        selectedIndices.value.add(i)
-      }
-    } else if (event.ctrlKey || event.metaKey) {
-      // Ctrl/Cmd+ 点击：切换选择
-      if (selectedIndices.value.has(index)) {
-        selectedIndices.value.delete(index)
-      } else {
-        selectedIndices.value.add(index)
-      }
-    } else {
-      // 普通点击：清空其他选择
-      selectedIndices.value.clear()
-      selectedIndices.value.add(index)
-    }
-    selectedIndex.value = index
-  } else {
-    // 单选模式
-    selectedIndex.value = index
-    selectedIndices.value.clear()
-  }
-}
-
-function toggleMultiSelect() {
-  isMultiSelectMode.value = !isMultiSelectMode.value
-  if (!isMultiSelectMode.value) {
-    selectedIndices.value.clear()
-  }
-  ElMessage.success(isMultiSelectMode.value ? '已开启多选模式' : '已关闭多选模式')
-}
-
-function setCanvasMode(mode) {
-  canvasMode.value = mode
-  selectedIndices.value.clear()
+function newMoleculeFull() {
+  newMolecule()
+  connections.value = []
+  helmInput.value = ''
+  helmOutput.value = ''
   selectedIndex.value = -1
-  // 清除 Canvas 选中状态
-  structureCanvasRef.value?.clearSelection()
-  const modeNames = { manual: '手动', select: '选择', drag: '拖拽' }
-  ElMessage.success(`已切换到${modeNames[mode]}模式`)
-}
-
-function handleMonomerMove({ index, x, y }) {
-  // 单体移动处理
-}
-
-function handleMonomerPositionsUpdate(positions) {
-  monomerPositions.value = positions
-}
-
-function handleSVGMonomerClick(index) {
-  // SVG 点击同步选中状态
-  selectedIndex.value = index
-  selectedIndices.value.clear()
-  selectedIndices.value.add(index)
-}
-
-function toggleConnectionMode() {
-  connectionMode.value = !connectionMode.value
   connectionStartIndex.value = -1
-  connectionHoverIndex.value = -1
-  if (connectionMode.value) {
-    isMarqueeMode.value = false
-    ElMessage.success('连接线模式：点击两个单体创建化学键（如二硫键）')
-    setTimeout(updateCanvasSize, 0)
-  } else {
-    ElMessage.info('已关闭连接线模式')
-  }
+  structureCanvasRef.value?.clearSelection()
+  drawConnections()
 }
 
-function handleMonomerClick(index, event) {
+function undoFull() {
+  undo((state) => {
+    connections.value = [] // connections not tracked in history yet
+    updateHELMOutput()
+    drawConnections()
+  })
+}
+
+function redoFull() {
+  redo((state) => {
+    connections.value = []
+    updateHELMOutput()
+    drawConnections()
+  })
+}
+
+function addMonomerFull(monomer: any) {
+  addMonomer(monomer)
+  updateHELMOutput()
+}
+
+function removeMonomerFull(index: number) {
+  removeMonomer(index)
+  updateHELMOutput()
+}
+
+function setCanvasModeFull(mode: 'manual' | 'select' | 'drag') {
+  setCanvasMode(mode, () => {
+    selectedIndices.value.clear()
+    selectedIndex.value = -1
+    structureCanvasRef.value?.clearSelection()
+    const modeNames = { manual: '手动', select: '选择', drag: '拖拽' }
+    ElMessage.success(`已切换到${modeNames[mode]}模式`)
+  })
+}
+
+function toggleConnectionModeFull() {
+  toggleConnectionMode((mode) => {
+    if (mode) {
+      isMarqueeMode.value = false
+      ElMessage.success('连接线模式：点击两个单体创建化学键（如二硫键）')
+      setTimeout(updateCanvasSize, 0)
+    } else {
+      ElMessage.info('已关闭连接线模式')
+    }
+  })
+}
+
+function handleMonomerClick(index: number, event: MouseEvent) {
   if (connectionMode.value) {
     event.stopPropagation()
-    handleConnectionClick(index)
+    handleConnectionClick(index, (status, from?, to?) => {
+      if (status === 'start') {
+        ElMessage.info(`已选择起点：${currentSequence.value[index]?.code}，请选择终点`)
+      } else if (status === 'cancel') {
+        ElMessage.info('已取消')
+      } else if (status === 'created') {
+        ElMessage.success(`已创建连接：${currentSequence.value[from!]?.code} ↔ ${currentSequence.value[to!]?.code}`)
+        drawConnections()
+      } else if (status === 'exists') {
+        ElMessage.warning('该连接已存在')
+      }
+    })
     return
   }
   selectMonomer(index, event)
 }
 
-function handleConnectionClick(index) {
-  if (connectionStartIndex.value === -1) {
-    // 第一个点击：选择起点
-    connectionStartIndex.value = index
-    ElMessage.info(`已选择起点：${currentSequence.value[index]?.code}，请选择终点`)
-  } else if (connectionStartIndex.value === index) {
-    // 点击同一个：取消
-    connectionStartIndex.value = -1
-    ElMessage.info('已取消')
-  } else {
-    // 第二个点击：创建连接
-    const from = connectionStartIndex.value
-    const to = index
-    // 检查是否已存在
-    const exists = connections.value.some(
-      c => (c.from === from && c.to === to) || (c.from === to && c.to === from)
-    )
-    if (exists) {
-      ElMessage.warning('该连接已存在')
-    } else {
-      connections.value.push({ from, to, type: 'covalent' })
-      ElMessage.success(`已创建连接：${currentSequence.value[from]?.code} ↔ ${currentSequence.value[to]?.code}`)
-      drawConnections()
-    }
-    connectionStartIndex.value = -1
-  }
+function handleMonomerMove(_data: { index: number; x: number; y: number }) {
+  // 单体移动处理 / Monomer move handler
 }
 
-function handleMonomerMouseEnter(index) {
-  if (connectionMode.value && connectionStartIndex.value !== -1) {
-    connectionHoverIndex.value = index
-  }
+function handleMonomerPositionsUpdate(positions: Record<number, { x: number; y: number }>) {
+  monomerPositions.value = positions
 }
 
-function handleMonomerMouseLeave(index) {
-  connectionHoverIndex.value = -1
+function handleSVGMonomerClick(index: number) {
+  selectedIndex.value = index
+  selectedIndices.value.clear()
+  selectedIndices.value.add(index)
+}
+
+function handleMonomerMouseLeave(_index: number) {
+  handleMonomerMouseLeave()
 }
 
 function updateCanvasSize() {
   const container = sequenceDisplayRef.value
   if (!container) return
-  canvasSize.value = {
-    width: container.offsetWidth,
-    height: container.offsetHeight
-  }
+  canvasSize.value = { width: container.offsetWidth, height: container.offsetHeight }
   setTimeout(drawConnections, 0)
 }
 
@@ -688,79 +489,58 @@ function drawConnections() {
   const canvas = connectionCanvasRef.value
   const container = sequenceDisplayRef.value
   if (!canvas || !container) return
-  
+
   const ctx = canvas.getContext('2d')
+  if (!ctx) return
   const rect = container.getBoundingClientRect()
-  
-  // 设置 canvas 尺寸
+
   canvas.width = canvasSize.value.width
   canvas.height = canvasSize.value.height
-  
-  // 清空画布
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-  
-  // 绘制所有连接线
+
   connections.value.forEach(conn => {
-    const fromEl = container.querySelector(`[data-monomer-index="${conn.from}"]`)
-    const toEl = container.querySelector(`[data-monomer-index="${conn.to}"]`)
-    
+    const fromEl = container.querySelector(`[data-monomer-index="${conn.from}"]`) as HTMLElement | null
+    const toEl = container.querySelector(`[data-monomer-index="${conn.to}"]`) as HTMLElement | null
     if (!fromEl || !toEl) return
-    
+
     const fromRect = fromEl.getBoundingClientRect()
     const toRect = toEl.getBoundingClientRect()
-    
     const fromX = fromRect.left - rect.left + fromRect.width / 2
     const fromY = fromRect.top - rect.top + fromRect.height / 2
     const toX = toRect.left - rect.left + toRect.width / 2
     const toY = toRect.top - rect.top + toRect.height / 2
-    
-    // 绘制曲线
+
     ctx.beginPath()
     ctx.moveTo(fromX, fromY)
-    
-    // 计算控制点，使曲线向上拱起
     const midX = (fromX + toX) / 2
     const midY = (fromY + toY) / 2
-    const offset = -50 // 向上偏移
-    
+    const offset = -50
     ctx.quadraticCurveTo(midX, midY + offset, toX, toY)
-    
     ctx.strokeStyle = '#67c23a'
     ctx.lineWidth = 2
     ctx.stroke()
-    
-    // 绘制箭头
+
     const angle = Math.atan2(toY - (midY + offset), toX - midX)
     const arrowLength = 10
     ctx.beginPath()
     ctx.moveTo(toX, toY)
-    ctx.lineTo(
-      toX - arrowLength * Math.cos(angle - Math.PI / 6),
-      toY - arrowLength * Math.sin(angle - Math.PI / 6)
-    )
-    ctx.lineTo(
-      toX - arrowLength * Math.cos(angle + Math.PI / 6),
-      toY - arrowLength * Math.sin(angle + Math.PI / 6)
-    )
+    ctx.lineTo(toX - arrowLength * Math.cos(angle - Math.PI / 6), toY - arrowLength * Math.sin(angle - Math.PI / 6))
+    ctx.lineTo(toX - arrowLength * Math.cos(angle + Math.PI / 6), toY - arrowLength * Math.sin(angle + Math.PI / 6))
     ctx.closePath()
     ctx.fillStyle = '#67c23a'
     ctx.fill()
   })
-  
-  // 绘制临时连接线（起点到悬停位置）
+
   if (connectionStartIndex.value !== -1 && connectionHoverIndex.value !== -1) {
-    const fromEl = container.querySelector(`[data-monomer-index="${connectionStartIndex.value}"]`)
-    const toEl = container.querySelector(`[data-monomer-index="${connectionHoverIndex.value}"]`)
-    
+    const fromEl = container.querySelector(`[data-monomer-index="${connectionStartIndex.value}"]`) as HTMLElement | null
+    const toEl = container.querySelector(`[data-monomer-index="${connectionHoverIndex.value}"]`) as HTMLElement | null
     if (fromEl && toEl) {
       const fromRect = fromEl.getBoundingClientRect()
       const toRect = toEl.getBoundingClientRect()
-      
       const fromX = fromRect.left - rect.left + fromRect.width / 2
       const fromY = fromRect.top - rect.top + fromRect.height / 2
       const toX = toRect.left - rect.left + toRect.width / 2
       const toY = toRect.top - rect.top + toRect.height / 2
-      
       ctx.beginPath()
       ctx.moveTo(fromX, fromY)
       ctx.lineTo(toX, toY)
@@ -773,95 +553,10 @@ function drawConnections() {
   }
 }
 
-function getRelativePointInContainer(event, container) {
-  const r = container.getBoundingClientRect()
-  return { x: event.clientX - r.left, y: event.clientY - r.top }
-}
-
-function rectIntersects(a, b) {
-  return !(
-    a.left + a.width < b.left ||
-    b.left + b.width < a.left ||
-    a.top + a.height < b.top ||
-    b.top + b.height < a.top
-  )
-}
-
-let marqueeMoveHandler = null
-
-function handleMarqueePointerDown(event) {
-  if (!isMarqueeMode.value) return
-  if (event.button !== 0) return
-  const container = sequenceDisplayRef.value
-  if (!container) return
-  event.preventDefault()
-  const p = getRelativePointInContainer(event, container)
-  marqueeStart.value = { ...p }
-  marqueeEnd.value = { ...p }
-  marqueeDragging.value = true
-
-  marqueeMoveHandler = (ev) => {
-    if (!marqueeDragging.value) return
-    marqueeEnd.value = getRelativePointInContainer(ev, container)
-  }
-  window.addEventListener('pointermove', marqueeMoveHandler)
-
-  const onUp = (ev) => {
-    window.removeEventListener('pointermove', marqueeMoveHandler)
-    marqueeMoveHandler = null
-    marqueeDragging.value = false
-
-    const dx = marqueeEnd.value.x - marqueeStart.value.x
-    const dy = marqueeEnd.value.y - marqueeStart.value.y
-    const dist = Math.hypot(dx, dy)
-
-    if (dist < 5) {
-      const el = ev.target?.closest?.('[data-monomer-index]')
-      if (el) {
-        const idx = parseInt(el.getAttribute('data-monomer-index'), 10)
-        if (!Number.isNaN(idx)) {
-          selectedIndex.value = idx
-          selectedIndices.value.clear()
-          selectedIndices.value.add(idx)
-        }
-      }
-      window.removeEventListener('pointerup', onUp)
-      return
-    }
-
-    const selLeft = Math.min(marqueeStart.value.x, marqueeEnd.value.x)
-    const selTop = Math.min(marqueeStart.value.y, marqueeEnd.value.y)
-    const selW = Math.abs(marqueeEnd.value.x - marqueeStart.value.x)
-    const selH = Math.abs(marqueeEnd.value.y - marqueeStart.value.y)
-    const sel = { left: selLeft, top: selTop, width: selW, height: selH }
-    const cr = container.getBoundingClientRect()
-    const hits = []
-    container.querySelectorAll('[data-monomer-index]').forEach((el) => {
-      const mr = el.getBoundingClientRect()
-      const rel = {
-        left: mr.left - cr.left,
-        top: mr.top - cr.top,
-        width: mr.width,
-        height: mr.height
-      }
-      if (rectIntersects(sel, rel)) {
-        hits.push(parseInt(el.getAttribute('data-monomer-index'), 10))
-      }
-    })
-    hits.sort((a, b) => a - b)
-    selectedIndices.value = new Set(hits)
-    selectedIndex.value = hits.length ? hits[hits.length - 1] : -1
-    window.removeEventListener('pointerup', onUp)
-  }
-  window.addEventListener('pointerup', onUp)
-}
-
-function onGlobalKeydown(event) {
-  // 在 select 模式下，Canvas 会处理键盘事件
+function onGlobalKeydown(event: KeyboardEvent) {
   if (canvasMode.value === 'select') return
-  
   if (event.key !== 'Delete' && event.key !== 'Backspace') return
-  const t = event.target
+  const t = event.target as HTMLElement | null
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
   if (selectedIndices.value.size === 0) return
   event.preventDefault()
@@ -873,37 +568,23 @@ function deleteSelected() {
     ElMessage.warning('没有选中的单体')
     return
   }
-  
   saveToHistory()
-  // 从后往前删除，避免索引偏移
   const indices = Array.from(selectedIndices.value).sort((a, b) => b - a)
   const indicesSet = new Set(indices)
-  
+
   indices.forEach(index => {
     currentSequence.value.splice(index, 1)
-    // 删除相关连接
-    connections.value = connections.value.filter(
-      c => c.from !== index && c.to !== index
-    )
-    // 更新连接索引
+    connections.value = connections.value.filter(c => c.from !== index && c.to !== index)
     connections.value.forEach(c => {
       if (c.from > index) c.from--
       if (c.to > index) c.to--
     })
   })
-  
-  // 清除单体位置信息
-  indices.forEach(index => {
-    delete monomerPositions.value[index]
-  })
-  
-  // 更新位置
-  currentSequence.value.forEach((m, i) => m.position = i + 1)
-  
-  // 清除选中状态（不切换模式）
+
+  indices.forEach(index => { delete monomerPositions.value[index] })
+  currentSequence.value.forEach((m, i) => { m.position = i + 1 })
   selectedIndices.value.clear()
   selectedIndex.value = -1
-  
   updateHELMOutput()
   drawConnections()
   ElMessage.success(`已删除 ${indices.length} 个单体`)
@@ -911,7 +592,6 @@ function deleteSelected() {
 
 function clearCanvas() {
   if (currentSequence.value.length === 0 && connections.value.length === 0) return
-  
   saveToHistory()
   currentSequence.value = []
   connections.value = []
@@ -920,220 +600,52 @@ function clearCanvas() {
   selectedIndex.value = -1
   selectedIndices.value.clear()
   connectionStartIndex.value = -1
-  // 清除 Canvas 选中状态
   structureCanvasRef.value?.clearSelection()
   drawConnections()
   ElMessage.success('画布已清空')
 }
 
-// 拖拽相关方法
-function handleMonomerDragStart(event, monomer) {
-  draggedMonomer.value = { ...monomer, isFromLibrary: true }
-  event.dataTransfer.effectAllowed = 'copy'
-  event.dataTransfer.setData('application/json', JSON.stringify({
-    type: 'monomer',
-    data: monomer
-  }))
+function handleDragStartFull(event: DragEvent, index: number) {
+  handleDragStart(event, index, isMarqueeMode.value)
 }
 
-function handleDragStart(event, index) {
-  if (isMarqueeMode.value) {
-    event.preventDefault()
-    return
-  }
-  if (selectedIndices.value.has(index)) {
-    // 拖拽选中的多个单体
-    draggedMonomer.value = {
-      isFromLibrary: false,
-      isMultiDrag: true,
-      indices: Array.from(selectedIndices.value),
-      monomers: Array.from(selectedIndices.value).map(i => currentSequence.value[i])
-    }
-  } else {
-    draggedMonomer.value = {
-      isFromLibrary: false,
-      index: index,
-      monomer: currentSequence.value[index]
-    }
-  }
-  isDragging.value = true
-  event.dataTransfer.effectAllowed = 'move'
-  event.dataTransfer.setData('application/json', JSON.stringify({
-    type: 'sequence',
-    index: index
-  }))
-}
-
-function handleDragEnd(event) {
-  isDragging.value = false
-  dragOverIndex.value = -1
-  draggedMonomer.value = null
-}
-
-function handleDragOver(event, index) {
-  event.preventDefault()
-  if (!isDragging.value) return
-  event.dataTransfer.dropEffect = 'move'
-  dragOverIndex.value = index
-}
-
-function handleDragLeave(event) {
-  dragOverIndex.value = -1
-}
-
-function handleDrop(event, dropIndex) {
-  event.preventDefault()
-  dragOverIndex.value = -1
-  
-  if (!draggedMonomer.value) return
-  
-  if (draggedMonomer.value.isFromLibrary) {
-    // 从库中拖拽添加
-    saveToHistory()
-    const src = draggedMonomer.value
-    const pt = src.type || polymerType.value
-    const monomer = {
-      ...src,
-      letter: src.letter || getHelmLetter(src, pt),
-      position: dropIndex + 1
-    }
-    currentSequence.value.splice(dropIndex, 0, monomer)
-    // 更新位置
-    currentSequence.value.forEach((m, i) => m.position = i + 1)
-    updateHELMOutput()
-    ElMessage.success(`添加了 ${monomer.code}`)
-  } else if (draggedMonomer.value.isMultiDrag) {
-    // 拖拽多个选中的单体
-    saveToHistory()
-    const monomersToMove = draggedMonomer.value.indices.map(i => currentSequence.value[i])
-    // 先删除（从后往前）
-    const indices = draggedMonomer.value.indices.sort((a, b) => b - a)
-    indices.forEach(idx => {
-      currentSequence.value.splice(idx, 1)
-    })
-    // 再插入到新位置
-    let insertIndex = dropIndex
-    indices.forEach(idx => {
-      if (idx < dropIndex) insertIndex--
-    })
-    monomersToMove.forEach(m => {
-      currentSequence.value.splice(insertIndex, 0, m)
-      insertIndex++
-    })
-    // 更新位置
-    currentSequence.value.forEach((m, i) => m.position = i + 1)
-    selectedIndices.value.clear()
-    updateHELMOutput()
-  } else {
-    // 拖拽单个单体重新排序
-    const dragIndex = draggedMonomer.value.index
-    if (dragIndex === dropIndex) return
-    
-    saveToHistory()
-    const [moved] = currentSequence.value.splice(dragIndex, 1)
-    let newIndex = dropIndex
-    if (dragIndex < dropIndex) newIndex--
-    currentSequence.value.splice(newIndex, 0, moved)
-    // 更新位置
-    currentSequence.value.forEach((m, i) => m.position = i + 1)
-    selectedIndex.value = newIndex
-    updateHELMOutput()
-  }
-}
-
-function handleSequenceDragOver(event) {
-  event.preventDefault()
-  if (!isDragging.value) {
-    event.dataTransfer.dropEffect = 'copy'
-  }
-}
-
-function handleSequenceDrop(event) {
-  event.preventDefault()
-  if (!draggedMonomer.value || !draggedMonomer.value.isFromLibrary) return
-  
-  // 拖拽到空白区域，添加到末尾
-  saveToHistory()
-  const src = draggedMonomer.value
-  const pt = src.type || polymerType.value
-  const monomer = {
-    ...src,
-    letter: src.letter || getHelmLetter(src, pt),
-    position: currentSequence.value.length + 1
-  }
-  currentSequence.value.push(monomer)
-  updateHELMOutput()
-  ElMessage.success(`添加了 ${monomer.code}`)
-}
-
-function parseInput() {
-  const input = helmInput.value.trim()
-  
-  if (!input) return
-  
-  // 尝试解析为 HELM
-  if (input.includes('{') && input.includes('}')) {
-    const parsed = parseHELM(input)
-    if (parsed.polymers.length > 0) {
-      saveToHistory()
-      currentSequence.value = parsed.polymers[0].sequence || []
-      polymerType.value = parsed.polymers[0].type
+function handleDropFull(event: DragEvent, dropIndex: number) {
+  handleDrop(event, dropIndex, (type, ...args) => {
+    if (type === 'library') {
+      const monomer = args[0]
       updateHELMOutput()
-      ElMessage.success('HELM 解析成功')
-      return
+      ElMessage.success(`添加了 ${monomer.code}`)
+    } else if (type === 'single') {
+      selectedIndex.value = args[1] as number
+      updateHELMOutput()
+    } else if (type === 'multi') {
+      selectedIndices.value.clear()
+      updateHELMOutput()
     }
-  }
-  
-  // 尝试解析为纯序列
-  if (/^[ACDEFGHIKLMNPQRSTVWY]+$/i.test(input)) {
-    saveToHistory()
-    polymerType.value = 'PEPTIDE'
-    currentSequence.value = input.split('').map((char, index) => {
-      const aa = helmParser.AMINO_ACIDS[char.toUpperCase()]
-      return aa
-        ? { ...aa, type: 'PEPTIDE', letter: char.toUpperCase(), position: index + 1 }
-        : null
-    }).filter(Boolean)
-    updateHELMOutput()
-    ElMessage.success('蛋白质序列解析成功')
-    return
-  }
-  
-  if (/^[ACGTU]+$/i.test(input)) {
-    saveToHistory()
-    polymerType.value = input.includes('U') ? 'RNA' : 'DNA'
-    const pt = polymerType.value
-    currentSequence.value = input.split('').map((char, index) => {
-      const nt = helmParser.NUCLEOTIDES[char.toUpperCase()]
-      return nt
-        ? { ...nt, type: pt, letter: char.toUpperCase(), position: index + 1 }
-        : null
-    }).filter(Boolean)
-    updateHELMOutput()
-    ElMessage.success('核酸序列解析成功')
-    return
-  }
-  
-  ElMessage.warning('无法识别的格式')
-}
-
-function updateHELMOutput() {
-  helmOutput.value = toHELM({
-    polymers: [{
-      type: polymerType.value,
-      index: 1,
-      monomers: currentSequence.value
-    }],
-    connections: connections.value.map(c => ({
-      source: `PEPTIDE1`,
-      sourceBond: c.from + 1, // HELM 使用 1-based 索引
-      target: `PEPTIDE1`,
-      targetBond: c.to + 1
-    }))
   })
 }
 
-function getMonomerClass(type) {
+function handleSequenceDropFull(event: DragEvent) {
+  handleSequenceDrop(event, (type, ...args) => {
+    if (type === 'library') {
+      const monomer = args[0]
+      updateHELMOutput()
+      ElMessage.success(`添加了 ${monomer.code}`)
+    }
+  })
+}
+
+function parseInputFull() {
+  parseInput((result) => {
+    if (result.success) {
+      ElMessage.success(result.message)
+    } else {
+      ElMessage.warning(result.message)
+    }
+  })
+}
+
+function getMonomerClass(type: string) {
   return {
     'monomer-peptide': type === 'PEPTIDE',
     'monomer-rna': type === 'RNA',
@@ -1141,72 +653,43 @@ function getMonomerClass(type) {
   }
 }
 
-function handleCanvasMonomerSelect(index) {
-  // Canvas 点击选中同步到序列视图
-  // 不切换模式，保持当前模式
+function handleCanvasMonomerSelect(index: number) {
   selectedIndex.value = index
   selectedIndices.value.clear()
   selectedIndices.value.add(index)
 }
 
-function handleCanvasRegionSelect(indices) {
-  // Canvas 矩形选择同步到序列视图
+function handleCanvasRegionSelect(indices: number[]) {
   selectedIndices.value = new Set(indices)
   selectedIndex.value = indices.length > 0 ? indices[indices.length - 1] : -1
 }
 
-function handleCanvasDeleteRequest(indices) {
-  // Canvas 请求删除选中的单体
+function handleCanvasDeleteRequest(indices: number[]) {
   if (indices.length === 0) return
-  
   saveToHistory()
-  
-  // 将索引转换为 Set 以便快速查找
   const indicesSet = new Set(indices)
-  
-  // 从后往前删除单体，避免索引偏移
   const sortedIndices = [...indices].sort((a, b) => b - a)
-  sortedIndices.forEach(index => {
-    currentSequence.value.splice(index, 1)
-  })
-  
-  // 过滤掉与删除元素相关的连接，并更新剩余连接的索引
-  const newConnections = []
+  sortedIndices.forEach(index => { currentSequence.value.splice(index, 1) })
+
+  const newConnections: typeof connections.value = []
   connections.value.forEach(conn => {
-    // 如果连接的任一端是要删除的元素，则跳过
-    if (indicesSet.has(conn.from) || indicesSet.has(conn.to)) {
-      return
-    }
-    // 计算新的索引：减去删除元素中比当前索引小的数量
+    if (indicesSet.has(conn.from) || indicesSet.has(conn.to)) return
     const fromShift = indices.filter(i => i < conn.from).length
     const toShift = indices.filter(i => i < conn.to).length
-    newConnections.push({
-      from: conn.from - fromShift,
-      to: conn.to - toShift,
-      type: conn.type
-    })
+    newConnections.push({ from: conn.from - fromShift, to: conn.to - toShift, type: conn.type })
   })
   connections.value = newConnections
-  
-  // 清除单体位置信息
-  indices.forEach(index => {
-    delete monomerPositions.value[index]
-  })
-  
-  // 更新位置
-  currentSequence.value.forEach((m, i) => m.position = i + 1)
-  
-  // 清除选中状态（不切换模式）
+
+  indices.forEach(index => { delete monomerPositions.value[index] })
+  currentSequence.value.forEach((m, i) => { m.position = i + 1 })
   selectedIndices.value.clear()
   selectedIndex.value = -1
-  
   updateHELMOutput()
   drawConnections()
   ElMessage.success(`已删除 ${indices.length} 个单体`)
 }
 
-function handleCanvasPaste(monomers) {
-  // Canvas 请求粘贴单体
+function handleCanvasPaste(monomers: any[]) {
   saveToHistory()
   const pt = polymerType.value
   monomers.forEach((m, i) => {
@@ -1221,30 +704,37 @@ function handleCanvasPaste(monomers) {
   ElMessage.success(`已粘贴 ${monomers.length} 个单体`)
 }
 
-// 同步选中状态到 Canvas
+function serializeStrandsFull() {
+  serializeStrands((result) => {
+    if (result.success) {
+      ElMessage.success(result.message)
+    } else {
+      ElMessage.warning(result.message)
+    }
+  })
+}
+
+// ===== Watchers / 监听器 =====
 watch([selectedIndex, currentSequence, polymerType, connections], () => {
   if (structureCanvasRef.value) {
     structureCanvasRef.value.render()
   }
 }, { deep: true })
 
+// ===== Lifecycle / 生命周期 =====
 onMounted(() => {
   window.addEventListener('keydown', onGlobalKeydown)
-  // 初始化 canvas 尺寸
   setTimeout(updateCanvasSize, 100)
-  // 窗口大小改变时更新
   window.addEventListener('resize', updateCanvasSize)
 })
+
 onUnmounted(() => {
   window.removeEventListener('keydown', onGlobalKeydown)
   window.removeEventListener('resize', updateCanvasSize)
-  if (marqueeMoveHandler) {
-    window.removeEventListener('pointermove', marqueeMoveHandler)
-    marqueeMoveHandler = null
-  }
+  marqueeCleanup()
 })
 
-// 初始化
+// 初始化 / Initialize
 saveToHistory()
 </script>
 

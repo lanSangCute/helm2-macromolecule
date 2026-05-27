@@ -99,6 +99,16 @@ const props = defineProps({
   monomerPositions: {
     type: Object,
     default: () => ({})
+  },
+  // 连接线模式
+  connectionMode: {
+    type: Boolean,
+    default: false
+  },
+  // 连接线起点索引（由父组件管理）
+  connectionStartIndex: {
+    type: Number,
+    default: -1
   }
 })
 
@@ -108,7 +118,11 @@ const emit = defineEmits([
   'update:selectedIndices',
   'monomer-move',
   'monomer-paste',
-  'update:monomerPositions'
+  'update:monomerPositions',
+  'connection-start',
+  'connection-complete',
+  'connection-cancel',
+  'connection-click'
 ])
 
 const canvasRef = ref(null)
@@ -155,6 +169,9 @@ const internalPositions = ref({})
 const showTooltip = ref(false)
 const tooltipPos = ref({ x: 0, y: 0 })
 const tooltipMonomerIndex = ref(-1)
+
+// 连接线悬停状态（用于视觉反馈）
+const connectionHoverIndex = ref(-1)
 
 // 渲染优化 - 使用 requestAnimationFrame 避免频繁重绘
 let renderPending = false
@@ -261,6 +278,7 @@ function drawMonomer(position) {
   const { x, y, monomer, index } = position
   const config = MONOMER_CONFIG[props.polymerType] || MONOMER_CONFIG.PEPTIDE
   const isSelected = index === selectedMonomerIndex.value || selectedIndices.value.has(index)
+  const isConnectionSource = props.connectionMode && props.connectionStartIndex === index
   
   ctx.value.save()
   
@@ -279,6 +297,16 @@ function drawMonomer(position) {
   // 填充颜色
   ctx.value.fillStyle = isSelected ? config.selectedBgColor : config.bgColor
   ctx.value.fill()
+  
+  // 连接线起点 - 绿色光晕
+  if (isConnectionSource) {
+    ctx.value.shadowColor = '#67c23a'
+    ctx.value.shadowBlur = 15 * viewport.value.scale
+    ctx.value.strokeStyle = '#67c23a'
+    ctx.value.lineWidth = 4 * viewport.value.scale
+    ctx.value.stroke()
+    ctx.value.shadowBlur = 0
+  }
   
   // 描边
   ctx.value.strokeStyle = isSelected ? config.selectedColor : config.color
@@ -346,6 +374,27 @@ function drawConnections(positions) {
   ctx.value.restore()
 }
 
+// 绘制连接线预览虚线（从起点到悬停的单体）
+function drawConnectionPreview(positions) {
+  if (!props.connectionMode || props.connectionStartIndex < 0 || connectionHoverIndex.value < 0) return
+  
+  const fromPos = positions.find(p => p.index === props.connectionStartIndex)
+  const toPos = positions.find(p => p.index === connectionHoverIndex.value)
+  
+  if (!fromPos || !toPos) return
+  
+  ctx.value.save()
+  ctx.value.strokeStyle = '#909399'
+  ctx.value.lineWidth = 2 * viewport.value.scale
+  ctx.value.setLineDash([6 * viewport.value.scale, 4 * viewport.value.scale])
+  ctx.value.beginPath()
+  ctx.value.moveTo(fromPos.x, fromPos.y)
+  ctx.value.lineTo(toPos.x, toPos.y)
+  ctx.value.stroke()
+  ctx.value.setLineDash([])
+  ctx.value.restore()
+}
+
 
 
 // 绘制矩形选择框
@@ -390,11 +439,14 @@ function render() {
   
   const positions = getMonomerPositions()
   
-  // 绘制顺序：连接线 -> 单体 -> 选择框
+  // 绘制顺序：连接线 -> 单体 -> 连接线预览 -> 选择框
   drawConnections(positions)
   
   // 绘制所有单体
   positions.forEach(pos => drawMonomer(pos))
+  
+  // 绘制连接线预览虚线
+  drawConnectionPreview(positions)
   
   // 绘制选择框（最上层）
   drawSelectionBox()
@@ -410,6 +462,14 @@ function handleMouseDown(event) {
   
   const positions = getMonomerPositions()
   const clickedMonomer = positions.find(pos => isPointInMonomer(clickX, clickY, pos))
+  
+  // Connection mode - emit connection-click for parent to handle
+  if (props.connectionMode && clickedMonomer) {
+    emit('connection-click', clickedMonomer.index)
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
   
   // Select 模式 - 矩形选择或拖动选中分子
   if (props.canvasMode === 'select') {
@@ -549,9 +609,22 @@ function handleMouseMove(event) {
     
     if (hoveredMonomer) {
       showMonomerTooltip(hoveredMonomer.index, mouseX, mouseY)
-      canvasRef.value.style.cursor = 'pointer'
+      // 连接线模式 - 跟踪悬停单体并重绘预览线
+      if (props.connectionMode) {
+        if (connectionHoverIndex.value !== hoveredMonomer.index) {
+          connectionHoverIndex.value = hoveredMonomer.index
+          requestRender()
+        }
+        canvasRef.value.style.cursor = 'pointer'
+      } else {
+        canvasRef.value.style.cursor = 'pointer'
+      }
     } else {
       hideMonomerTooltip()
+      if (connectionHoverIndex.value !== -1) {
+        connectionHoverIndex.value = -1
+        requestRender()
+      }
       canvasRef.value.style.cursor = 'grab'
     }
   }
@@ -565,6 +638,24 @@ function handleMouseMove(event) {
       canvasRef.value.style.cursor = 'grab'
     } else {
       canvasRef.value.style.cursor = 'crosshair'
+    }
+  }
+  
+  // Drag 模式或 Manual 模式 - 连接线悬停跟踪（所有模式都支持）
+  if (props.connectionMode && !isDragging.value && !isDraggingMonomer.value && !isSelecting.value && !isDraggingSelected.value) {
+    const positions = getMonomerPositions()
+    const hoveredMonomer = positions.find(pos => isPointInMonomer(mouseX, mouseY, pos))
+    if (hoveredMonomer) {
+      if (connectionHoverIndex.value !== hoveredMonomer.index) {
+        connectionHoverIndex.value = hoveredMonomer.index
+        requestRender()
+      }
+      canvasRef.value.style.cursor = 'pointer'
+    } else {
+      if (connectionHoverIndex.value !== -1) {
+        connectionHoverIndex.value = -1
+        requestRender()
+      }
     }
   }
   
@@ -694,6 +785,7 @@ function handleMouseUp(event) {
 // 鼠标离开画布
 function handleMouseLeave() {
   hideMonomerTooltip()
+  connectionHoverIndex.value = -1
   isDragging.value = false
   isDraggingMonomer.value = false
   isSelecting.value = false
@@ -923,6 +1015,37 @@ function resetView() {
   render()
 }
 
+// 自适应内容大小（用于序列化后自动缩放）
+function fitToContent() {
+  const positions = getMonomerPositions()
+  if (positions.length === 0) return
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+  positions.forEach(p => {
+    minX = Math.min(minX, p.x - 30)
+    maxX = Math.max(maxX, p.x + 30)
+    minY = Math.min(minY, p.y - 30)
+    maxY = Math.max(maxY, p.y + 30)
+  })
+
+  const padding = 50
+  const contentWidth = maxX - minX + padding * 2
+  const contentHeight = maxY - minY + padding * 2
+
+  const scaleX = canvasSize.value.width / contentWidth
+  const scaleY = canvasSize.value.height / contentHeight
+  const scale = Math.min(scaleX, scaleY, 2) // max 2x zoom
+
+  const centerX = (minX + maxX) / 2
+  const centerY = (minY + maxY) / 2
+
+  viewport.value.scale = scale
+  viewport.value.offsetX = canvasSize.value.width / 2 - centerX * scale
+  viewport.value.offsetY = canvasSize.value.height / 2 - centerY * scale
+
+  render()
+}
+
 // 监听序列变化
 watch(
   () => [props.sequence, props.polymerType, props.connections],
@@ -930,6 +1053,14 @@ watch(
     render()
   },
   { deep: true }
+)
+
+// 监听连接线相关属性变化，触发重绘
+watch(
+  () => [props.connectionMode, props.connectionStartIndex],
+  () => {
+    render()
+  }
 )
 
 // 监听 canvasMode 变化，切换模式时清除选中状态
@@ -973,6 +1104,7 @@ onUnmounted(() => {
 // 暴露方法
 defineExpose({
   resetView,
+  fitToContent,
   render,
   deleteSelectedMonomers,
   copySelectedMonomers,
