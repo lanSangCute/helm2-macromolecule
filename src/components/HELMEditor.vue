@@ -102,6 +102,7 @@
             </el-button>
           </div>
           <StructureCanvas
+            v-if="!showSVG"
             ref="structureCanvasRef"
             :sequence="currentSequence"
             :polymer-type="polymerType"

@@ -1,10 +1,11 @@
 <template>
   <div class="structure-svg">
     <svg
-      :width="width"
+      width="100%"
       :height="height"
       :viewBox="`0 0 ${width} ${height}`"
       xmlns="http://www.w3.org/2000/svg"
+      preserveAspectRatio="xMidYMid meet"
     >
       <!-- 绘制单体 -->
       <g v-for="pos in positions" :key="pos.index">
@@ -228,11 +229,14 @@ function handleMonomerLeave() {
   background: #fff;
   border: 1px solid #e4e7ed;
   border-radius: 4px;
-  overflow: hidden;
+  overflow: auto;
+  width: 100%;
 }
 
 .structure-svg svg {
   display: block;
+  max-width: 100%;
+  height: auto;
 }
 
 .structure-svg circle,
