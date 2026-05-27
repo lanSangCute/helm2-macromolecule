@@ -5,7 +5,7 @@
  * 负责序列化：根据连通分量将单体分行排列
  * Handles serialization: arranges monomers in rows based on connected components
  */
-import type { Ref } from 'vue'
+import { nextTick, type Ref } from 'vue'
 import type { Monomer } from './use-sequence'
 import type { Connection } from './use-connections'
 
@@ -114,11 +114,14 @@ export function useStrandLayout(options: UseStrandLayoutOptions) {
     // Step 4: 更新位置 / Update positions
     monomerPositions.value = newPositions
 
-    // Step 5: 重置 viewport 并适配画布 / Reset viewport and fit canvas to content
-    if (structureCanvasRef.value) {
-      structureCanvasRef.value.resetView()
-      structureCanvasRef.value.fitToContent()
-    }
+    // Step 5: 使用 nextTick 确保 monomerPositions 更新后再渲染
+    nextTick(() => {
+      if (structureCanvasRef.value) {
+        structureCanvasRef.value.resetView()
+        structureCanvasRef.value.render()
+        structureCanvasRef.value.fitToContent()
+      }
+    })
 
     if (onResult) onResult({ success: true, message: `已序列化：${strands.length} 条链` })
   }

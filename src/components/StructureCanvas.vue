@@ -221,19 +221,22 @@ function getMonomerPositions() {
   const spacing = 70 // 单体间距
 
   props.sequence.forEach((monomer, index) => {
-    // 优先使用内部位置(实时更新),其次是 props 传入的位置
-    const storedPos = internalPositions.value[index] || props.monomerPositions[index]
+    // 优先使用 props 传入的位置(序列化后的绝对坐标),其次是内部位置
+    const storedPos = props.monomerPositions[index] || internalPositions.value[index]
     let x, y
 
     if (storedPos) {
-      // 存储的位置是绝对坐标,直接使用
+      // 存储的位置是绝对坐标,需要根据 viewport缩放和偏移来绘制
       x = storedPos.x
       y = storedPos.y
     } else {
-      // 默认水平排列,Y 坐标使用 canvas 高度的中间位置(确保最小值)
+      // 默认水平排列，基于 canvas 中心计算位置
       const canvasHeight = canvasSize.value.height || 350
+      const canvasWidth = canvasSize.value.width || 600
       const centerY = canvasHeight / 2
-      x = viewport.value.offsetX + index * spacing * viewport.value.scale
+      // 从左侧开始，确保第一个单体可见
+      const startX = 50
+      x = startX + index * spacing
       y = centerY
     }
 
@@ -277,7 +280,10 @@ function getMonomerBounds(index, x, y) {
 
 // 绘制单体
 function drawMonomer(position) {
-  const { x, y, monomer, index } = position
+  // 将绝对坐标转换为 canvas 可视坐标
+  const x = position.x * viewport.value.scale + viewport.value.offsetX
+  const y = position.y * viewport.value.scale + viewport.value.offsetY
+  const { monomer, index } = position
   const config = MONOMER_CONFIG[props.polymerType] || MONOMER_CONFIG.PEPTIDE
   const isSelected = index === selectedMonomerIndex.value || selectedIndices.value.has(index)
   const isConnectionSource = props.connectionMode && props.connectionStartIndex === index
@@ -342,31 +348,37 @@ function drawConnections(positions) {
 
     if (!fromPos || !toPos) return
 
+    // 将绝对坐标转换为 canvas 可视坐标
+    const fromX = fromPos.x * viewport.value.scale + viewport.value.offsetX
+    const fromY = fromPos.y * viewport.value.scale + viewport.value.offsetY
+    const toX = toPos.x * viewport.value.scale + viewport.value.offsetX
+    const toY = toPos.y * viewport.value.scale + viewport.value.offsetY
+
     // 绘制曲线
     ctx.value.beginPath()
-    ctx.value.moveTo(fromPos.x, fromPos.y)
+    ctx.value.moveTo(fromX, fromY)
 
     // 计算控制点,使曲线向上拱起
-    const midX = (fromPos.x + toPos.x) / 2
-    const midY = (fromPos.y + toPos.y) / 2
+    const midX = (fromX + toX) / 2
+    const midY = (fromY + toY) / 2
     const offset = -50 * viewport.value.scale
 
-    ctx.value.quadraticCurveTo(midX, midY + offset, toPos.x, toPos.y)
+    ctx.value.quadraticCurveTo(midX, midY + offset, toX, toY)
     ctx.value.stroke()
 
     // 绘制箭头
-    const angle = Math.atan2(toPos.y - (midY + offset), toPos.x - midX)
+    const angle = Math.atan2(toY - (midY + offset), toX - midX)
     const arrowLength = 10 * viewport.value.scale
 
     ctx.value.beginPath()
-    ctx.value.moveTo(toPos.x, toPos.y)
+    ctx.value.moveTo(toX, toY)
     ctx.value.lineTo(
-      toPos.x - arrowLength * Math.cos(angle - Math.PI / 6),
-      toPos.y - arrowLength * Math.sin(angle - Math.PI / 6)
+      toX - arrowLength * Math.cos(angle - Math.PI / 6),
+      toY - arrowLength * Math.sin(angle - Math.PI / 6)
     )
     ctx.value.lineTo(
-      toPos.x - arrowLength * Math.cos(angle + Math.PI / 6),
-      toPos.y - arrowLength * Math.sin(angle + Math.PI / 6)
+      toX - arrowLength * Math.cos(angle + Math.PI / 6),
+      toY - arrowLength * Math.sin(angle + Math.PI / 6)
     )
     ctx.value.closePath()
     ctx.value.fillStyle = '#67c23a'
@@ -385,13 +397,19 @@ function drawConnectionPreview(positions) {
 
   if (!fromPos || !toPos) return
 
+  // 将绝对坐标转换为 canvas 可视坐标
+  const fromX = fromPos.x * viewport.value.scale + viewport.value.offsetX
+  const fromY = fromPos.y * viewport.value.scale + viewport.value.offsetY
+  const toX = toPos.x * viewport.value.scale + viewport.value.offsetX
+  const toY = toPos.y * viewport.value.scale + viewport.value.offsetY
+
   ctx.value.save()
   ctx.value.strokeStyle = '#909399'
   ctx.value.lineWidth = 2 * viewport.value.scale
   ctx.value.setLineDash([6 * viewport.value.scale, 4 * viewport.value.scale])
   ctx.value.beginPath()
-  ctx.value.moveTo(fromPos.x, fromPos.y)
-  ctx.value.lineTo(toPos.x, toPos.y)
+  ctx.value.moveTo(fromX, fromY)
+  ctx.value.lineTo(toX, toY)
   ctx.value.stroke()
   ctx.value.setLineDash([])
   ctx.value.restore()
@@ -820,16 +838,23 @@ function handleWheel(event) {
 function isPointInMonomer(x, y, position) {
   const config = MONOMER_CONFIG[props.polymerType] || MONOMER_CONFIG.PEPTIDE
 
+  // 将绝对坐标转换为 canvas 可视坐标
+  const posX = position.x * viewport.value.scale + viewport.value.offsetX
+  const posY = position.y * viewport.value.scale + viewport.value.offsetY
+
   if (config.shape === 'circle') {
-    const dx = x - position.x
-    const dy = y - position.y
-    return Math.hypot(dx, dy) <= position.radius
+    const radius = config.radius * viewport.value.scale
+    const dx = x - posX
+    const dy = y - posY
+    return Math.hypot(dx, dy) <= radius
   } else {
+    const size = config.size * viewport.value.scale
+    const halfSize = size / 2
     return (
-      x >= position.left &&
-      x <= position.right &&
-      y >= position.top &&
-      y <= position.bottom
+      x >= posX - halfSize &&
+      x <= posX + halfSize &&
+      y >= posY - halfSize &&
+      y <= posY + halfSize
     )
   }
 }
@@ -1022,27 +1047,29 @@ function fitToContent() {
   const positions = getMonomerPositions()
   if (positions.length === 0) return
 
+  // 计算所有单体的边界
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
   positions.forEach(p => {
-    minX = Math.min(minX, p.x - 30)
-    maxX = Math.max(maxX, p.x + 30)
-    minY = Math.min(minY, p.y - 30)
-    maxY = Math.max(maxY, p.y + 30)
+    minX = Math.min(minX, p.x - 40)
+    maxX = Math.max(maxX, p.x + 40)
+    minY = Math.min(minY, p.y - 40)
+    maxY = Math.max(maxY, p.y + 40)
   })
 
-  // 确保canvas有最小高度
-  const canvasHeight = Math.max(canvasSize.value.height, 300)
-  const canvasWidth = canvasSize.value.width || 800
+  // 确保canvas有最小尺寸
+  const canvasHeight = Math.max(canvasSize.value.height, 350)
+  const canvasWidth = Math.max(canvasSize.value.width, 600)
 
-  const padding = 80 // 增大 padding，确保留出空间
+  const padding = 60
   const contentWidth = maxX - minX + padding * 2
   const contentHeight = maxY - minY + padding * 2
 
   // 计算缩放，确保内容完整显示
   const scaleX = canvasWidth / contentWidth
   const scaleY = canvasHeight / contentHeight
-  const scale = Math.min(scaleX, scaleY, 1.5) // max 1.5x zoom，避免过度放大
+  const scale = Math.min(scaleX, scaleY, 1) // max 1x zoom，不放大
 
+  // 计算偏移，使内容居中
   const centerX = (minX + maxX) / 2
   const centerY = (minY + maxY) / 2
 

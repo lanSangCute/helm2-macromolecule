@@ -1,54 +1,5 @@
 <template>
   <div class="helm-editor">
-    <!-- 顶部工具栏 -->
-    <el-toolbar class="toolbar">
-      <el-space wrap>
-        <el-button @click="newMoleculeFull" :icon="Plus">新建</el-button>
-        <el-button @click="openFile" :icon="FolderOpened">打开</el-button>
-        <el-button @click="saveHELM" :icon="Download">保存</el-button>
-        
-        <el-button @click="exportFormat('SMILES')" :icon="Document">SMILES</el-button>
-        <el-button @click="exportFormat('Molfile')" :icon="Document">Molfile</el-button>
-        <el-button @click="exportFormat('HELM')" :icon="Document">HELM</el-button>
-        
-        <el-button @click="undoFull" :icon="RefreshLeft">撤销</el-button>
-        <el-button @click="redoFull" :icon="RefreshRight">重做</el-button>
-        
-        <el-button @click="deleteSelected" :icon="Delete" type="danger" :disabled="selectedIndices.size === 0">
-          删除选中 ({{ selectedIndices.size }})
-        </el-button>
-        <el-button @click="clearCanvas" :icon="Delete" type="warning">清空画布</el-button>
-        
-        <el-button @click="setCanvasModeFull('manual')" :type="canvasMode === 'manual' ? 'primary' : ''">
-          Manual
-        </el-button>
-        <el-button
-          @click="setCanvasModeFull('select')"
-          :type="canvasMode === 'select' ? 'primary' : ''"
-          :icon="Pointer"
-        >
-          Select
-        </el-button>
-        <el-button
-          @click="setCanvasModeFull('drag')"
-          :type="canvasMode === 'drag' ? 'primary' : ''"
-          :icon="Pointer"
-        >
-          Drag
-        </el-button>
-        <el-button @click="serializeStrandsFull" :icon="Rank">
-          序列化
-        </el-button>
-        <el-button
-          @click="toggleConnectionModeFull"
-          :type="connectionMode ? 'success' : ''"
-          :icon="Connection"
-        >
-          连接线 {{ connectionMode ? '开' : '关' }}
-        </el-button>
-      </el-space>
-    </el-toolbar>
-    
     <!-- 主编辑区 -->
     <div class="editor-container">
       <!-- 左侧单体库 -->
@@ -90,15 +41,59 @@
       <!-- 中间画布区 -->
       <div class="canvas-area">
         <!-- 结构式 Canvas -->
-        <el-card shadow="never" class="structure-view" :body-style="{ padding: '12px' }">
-          <template #header>
-            <div class="structure-header">
-              <span>结构式</span>
-              <el-button size="small" @click="showSVG = !showSVG">
-                {{ showSVG ? '隐藏' : '查看' }} SVG
+        <div class="structure-view">
+          <!-- 工具栏 -->
+          <div class="canvas-toolbar">
+            <el-space wrap>
+              <el-button @click="newMoleculeFull" :icon="Plus">新建</el-button>
+              <el-button @click="openFile" :icon="FolderOpened">打开</el-button>
+              <el-button @click="saveHELM" :icon="Download">保存</el-button>
+              
+              <el-button @click="exportFormat('SMILES')" :icon="Document">SMILES</el-button>
+              <el-button @click="exportFormat('Molfile')" :icon="Document">Molfile</el-button>
+              <el-button @click="exportFormat('HELM')" :icon="Document">HELM</el-button>
+              
+              <el-button @click="undoFull" :icon="RefreshLeft">撤销</el-button>
+              <el-button @click="redoFull" :icon="RefreshRight">重做</el-button>
+              
+              <el-button @click="deleteSelected" :icon="Delete" type="danger" :disabled="selectedIndices.size === 0">
+                删除选中 ({{ selectedIndices.size }})
               </el-button>
-            </div>
-          </template>
+              <el-button @click="clearCanvas" :icon="Delete" type="warning">清空画布</el-button>
+              
+              <el-button @click="setCanvasModeFull('manual')" :type="canvasMode === 'manual' ? 'primary' : ''">
+                Manual
+              </el-button>
+              <el-button
+                @click="setCanvasModeFull('select')"
+                :type="canvasMode === 'select' ? 'primary' : ''"
+                :icon="Pointer"
+              >
+                Select
+              </el-button>
+              <el-button
+                @click="setCanvasModeFull('drag')"
+                :type="canvasMode === 'drag' ? 'primary' : ''"
+                :icon="Pointer"
+              >
+                Drag
+              </el-button>
+              <el-button
+                @click="serializeStrandsFull"
+                :icon="Rank"
+              >
+                序列化
+              </el-button>
+              <el-button
+                @click="toggleConnectionModeFull"
+                :type="connectionMode ? 'success' : ''"
+                :icon="Connection"
+              >
+                连接线 {{ connectionMode ? '开' : '关' }}
+              </el-button>
+            </el-space>
+          </div>
+          <div class="structure-body">
           <!-- Canvas 实图始终显示 -->
           <StructureCanvas
             ref="structureCanvasRef"
@@ -117,24 +112,25 @@
             @update:monomer-positions="handleMonomerPositionsUpdate"
             @connection-click="handleCanvasConnectionClick"
           />
-          <!-- SVG 在 Canvas 下面展示（可选） -->
-          <StructureSVG
-            v-if="showSVG"
-            :sequence="currentSequence"
-            :polymer-type="polymerType"
-            :connections="connections"
-            :monomer-positions="monomerPositions"
-            :selected-index="selectedIndex"
-            :selected-indices="selectedIndices"
-            :width="768"
-            :height="300"
-            @monomer-click="handleSVGMonomerClick"
-          />
-        </el-card>
+            <!-- SVG 在 Canvas 下面展示（可选） -->
+            <StructureSVG
+              v-if="showSVG"
+              :sequence="currentSequence"
+              :polymer-type="polymerType"
+              :connections="connections"
+              :monomer-positions="monomerPositions"
+              :selected-index="selectedIndex"
+              :selected-indices="selectedIndices"
+              :width="768"
+              :height="300"
+              @monomer-click="handleSVGMonomerClick"
+            />
+          </div>
+        </div>
         
         <!-- 序列视图 -->
-        <el-card shadow="never" class="sequence-view">
-          <template #header>序列视图</template>
+        <div class="sequence-view">
+          <div class="view-header">序列视图</div>
           <div 
             ref="sequenceDisplayRef"
             class="sequence-display"
@@ -186,9 +182,9 @@
               :style="marqueeBoxStyle"
             />
           </div>
-        </el-card>
+        </div>
         
-        <el-card shadow="never" class="input-area">
+        <div class="input-area">
           <el-input
             v-model="helmInput"
             type="textarea"
@@ -196,19 +192,21 @@
             placeholder="粘贴 HELM 字符串或序列..."
             @change="parseInputFull"
           />
-        </el-card>
+        </div>
       </div>
       
       <!-- 右侧信息面板 -->
-      <el-card shadow="never" class="info-panel">
-        <template #header>分子信息</template>
-        <el-descriptions :column="1" size="small">
-          <el-descriptions-item label="类型">{{ polymerType }}</el-descriptions-item>
-          <el-descriptions-item label="长度">{{ currentSequence.length }}</el-descriptions-item>
-          <el-descriptions-item label="分子量">{{ calculatedMass }} Da</el-descriptions-item>
-          <el-descriptions-item label="HELM">{{ helmOutput }}</el-descriptions-item>
-        </el-descriptions>
-      </el-card>
+      <div class="info-panel">
+        <div class="view-header">分子信息</div>
+        <div class="panel-body">
+          <el-descriptions :column="1" size="small">
+            <el-descriptions-item label="类型">{{ polymerType }}</el-descriptions-item>
+            <el-descriptions-item label="长度">{{ currentSequence.length }}</el-descriptions-item>
+            <el-descriptions-item label="分子量">{{ calculatedMass }} Da</el-descriptions-item>
+            <el-descriptions-item label="HELM">{{ helmOutput }}</el-descriptions-item>
+          </el-descriptions>
+        </div>
+      </div>
     </div>
     <input
       ref="fileInputRef"
@@ -404,6 +402,13 @@ function redoFull() {
 function addMonomerFull(monomer: any) {
   addMonomer(monomer)
   updateHELMOutput()
+  // 新增单体后清除序列化位置，让所有单体重新使用默认布局
+  monomerPositions.value = {}
+  // 重置 viewport 并重新适应内容
+  if (structureCanvasRef.value) {
+    structureCanvasRef.value.resetView()
+    structureCanvasRef.value.fitToContent()
+  }
 }
 
 function removeMonomerFull(index: number) {
@@ -691,7 +696,7 @@ function serializeStrandsFull() {
 }
 
 // ===== Watchers / 监听器 =====
-watch([selectedIndex, currentSequence, polymerType, connections], () => {
+watch([selectedIndex, currentSequence, polymerType, connections, monomerPositions], () => {
   if (structureCanvasRef.value) {
     structureCanvasRef.value.render()
   }
@@ -720,20 +725,6 @@ saveToHistory()
   display: flex;
   flex-direction: column;
   background: #f5f7fa;
-}
-
-.toolbar {
-  display: flex;
-  gap: 16px;
-  padding: 12px 16px;
-  background: #fff;
-  border-bottom: 1px solid #e4e7ed;
-  flex-wrap: wrap;
-}
-
-.toolbar-group {
-  display: flex;
-  gap: 8px;
 }
 
 .editor-container {
@@ -781,19 +772,23 @@ saveToHistory()
 .structure-view {
   background: #fff;
   border-radius: 4px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
-.structure-view :deep(.el-card__body) {
+.canvas-toolbar {
+  padding: 12px;
+  border-bottom: 1px solid #ebeef5;
+  background: #fafafa;
+}
+
+.structure-body {
+  padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-
-.structure-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 12px;
+  flex: 1;
 }
 
 .structure-header h3 {
@@ -805,13 +800,18 @@ saveToHistory()
 .sequence-view {
   background: #fff;
   border-radius: 4px;
-  padding: 16px;
 }
 
-.sequence-view h3 {
+.sequence-view .view-header {
+  padding: 12px;
+  border-bottom: 1px solid #ebeef5;
   font-size: 14px;
+  font-weight: 500;
   color: #606266;
-  margin: 0 0 12px 0;
+}
+
+.sequence-view .sequence-display {
+  padding: 12px;
 }
 
 .sequence-display {
@@ -927,20 +927,25 @@ saveToHistory()
 .input-area {
   background: #fff;
   border-radius: 4px;
-  padding: 16px;
+  padding: 12px;
 }
 
 .info-panel {
   width: 250px;
   background: #fff;
   border-left: 1px solid #e4e7ed;
-  padding: 16px;
   overflow-y: auto;
 }
 
-.info-panel h3 {
+.info-panel .view-header {
+  padding: 12px;
+  border-bottom: 1px solid #ebeef5;
   font-size: 14px;
+  font-weight: 500;
   color: #606266;
-  margin: 0 0 12px 0;
+}
+
+.info-panel .panel-body {
+  padding: 12px;
 }
 </style>
