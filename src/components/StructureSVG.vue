@@ -4,7 +4,7 @@
       width="100%"
       :viewBox="`0 0 ${viewBoxWidth} ${height}`"
       xmlns="http://www.w3.org/2000/svg"
-      preserveAspectRatio="none"
+      preserveAspectRatio="xMidYMid meet"
       style="min-height: 250px; display: block; cursor: pointer;"
       @click="downloadSVG"
     >
@@ -266,13 +266,15 @@ function handleMonomerLeave() {
   background: #fff;
   border: 1px solid #e4e7ed;
   border-radius: 4px;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
   width: 100%;
 }
 
 .structure-svg svg {
   display: block;
-  max-width: 100%;
+  width: 100%;
+  min-width: 280px;
   height: auto;
 }
 
