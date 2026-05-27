@@ -115,7 +115,7 @@
             @monomer-paste="handleCanvasPaste"
             @monomer-move="handleMonomerMove"
             @update:monomer-positions="handleMonomerPositionsUpdate"
-            @connection-click="handleConnectionClick"
+            @connection-click="handleCanvasConnectionClick"
           />
           <StructureSVG
             v-if="showSVG"
@@ -138,8 +138,7 @@
             ref="sequenceDisplayRef"
             class="sequence-display"
             :class="{ 
-              'sequence-display--marquee': isMarqueeMode,
-              'sequence-display--connection': connectionMode 
+              'sequence-display--marquee': isMarqueeMode
             }"
             @dragover="handleSequenceDragOver"
             @drop="handleSequenceDropFull"
@@ -161,9 +160,7 @@
                 getMonomerClass(monomer.type),
                 { selected: selectedIndex === index },
                 { 'multi-selected': selectedIndices.has(index) },
-                { 'drag-over': dragOverIndex === index },
-                { 'connection-source': connectionStartIndex === index },
-                { 'connection-hover': connectionHoverIndex === index && connectionMode }
+                { 'drag-over': dragOverIndex === index }
               ]"
               :draggable="!isMarqueeMode && !connectionMode"
               @click="handleMonomerClick(index, $event)"
@@ -172,8 +169,6 @@
               @dragover="handleDragOver($event, index)"
               @dragleave="handleDragLeave($event)"
               @drop="handleDropFull($event, index)"
-              @mouseenter="handleMonomerMouseEnter(index)"
-              @mouseleave="onMonomerMouseLeave(index)"
             >
               <span class="monomer-drag-handle">☰</span>
               {{ monomer.code }}
@@ -278,11 +273,8 @@ const {
   connections,
   connectionMode,
   connectionStartIndex,
-  connectionHoverIndex,
   toggleConnectionMode,
-  handleConnectionClick,
-  handleMonomerMouseEnter,
-  handleMonomerMouseLeave
+  handleConnectionClick
 } = useConnections()
 
 // --- Canvas Mode Management / 画布模式管理 ---
@@ -441,23 +433,31 @@ function toggleConnectionModeFull() {
 }
 
 function handleMonomerClick(index: number, event: MouseEvent) {
+  // Connection mode is handled by StructureCanvas only, not sequence buttons
   if (connectionMode.value) {
-    event.stopPropagation()
-    handleConnectionClick(index, (status, from?, to?) => {
-      if (status === 'start') {
-        ElMessage.info(`已选择起点：${currentSequence.value[index]?.code}，请选择终点`)
-      } else if (status === 'cancel') {
-        ElMessage.info('已取消')
-      } else if (status === 'created') {
-        ElMessage.success(`已创建连接：${currentSequence.value[from!]?.code} ↔ ${currentSequence.value[to!]?.code}`)
-        drawConnections()
-      } else if (status === 'exists') {
-        ElMessage.warning('该连接已存在')
-      }
-    })
     return
   }
   selectMonomer(index, event)
+}
+
+// Handle connection click from StructureCanvas
+function handleCanvasConnectionClick(index: number) {
+  handleConnectionClick(index, (status, from?, to?) => {
+    if (status === 'start') {
+      ElMessage.info(`已选择起点：${currentSequence.value[index]?.code}，请选择终点`)
+    } else if (status === 'cancel') {
+      ElMessage.info('已取消')
+    } else if (status === 'created') {
+      ElMessage.success(`已创建连接：${currentSequence.value[from!]?.code} ↔ ${currentSequence.value[to!]?.code}`)
+      // Redraw connections on both canvas and sequence view
+      drawConnections()
+      if (structureCanvasRef.value) {
+        structureCanvasRef.value.render()
+      }
+    } else if (status === 'exists') {
+      ElMessage.warning('该连接已存在')
+    }
+  })
 }
 
 function handleMonomerMove(_data: { index: number; x: number; y: number }) {
@@ -472,10 +472,6 @@ function handleSVGMonomerClick(index: number) {
   selectedIndex.value = index
   selectedIndices.value.clear()
   selectedIndices.value.add(index)
-}
-
-function onMonomerMouseLeave(_index: number) {
-  handleMonomerMouseLeave()
 }
 
 function updateCanvasSize() {
@@ -530,27 +526,6 @@ function drawConnections() {
     ctx.fillStyle = '#67c23a'
     ctx.fill()
   })
-
-  if (connectionStartIndex.value !== -1 && connectionHoverIndex.value !== -1) {
-    const fromEl = container.querySelector(`[data-monomer-index="${connectionStartIndex.value}"]`) as HTMLElement | null
-    const toEl = container.querySelector(`[data-monomer-index="${connectionHoverIndex.value}"]`) as HTMLElement | null
-    if (fromEl && toEl) {
-      const fromRect = fromEl.getBoundingClientRect()
-      const toRect = toEl.getBoundingClientRect()
-      const fromX = fromRect.left - rect.left + fromRect.width / 2
-      const fromY = fromRect.top - rect.top + fromRect.height / 2
-      const toX = toRect.left - rect.left + toRect.width / 2
-      const toY = toRect.top - rect.top + toRect.height / 2
-      ctx.beginPath()
-      ctx.moveTo(fromX, fromY)
-      ctx.lineTo(toX, toY)
-      ctx.strokeStyle = '#909399'
-      ctx.lineWidth = 1
-      ctx.setLineDash([5, 5])
-      ctx.stroke()
-      ctx.setLineDash([])
-    }
-  }
 }
 
 function onGlobalKeydown(event: KeyboardEvent) {
@@ -855,20 +830,6 @@ saveToHistory()
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
-}
-
-.sequence-display--connection {
-  cursor: pointer;
-}
-
-.connection-source {
-  box-shadow: 0 0 0 2px #67c23a !important;
-  background: #f0f9eb !important;
-}
-
-.connection-hover {
-  box-shadow: 0 0 0 2px #909399 !important;
-  opacity: 0.8;
 }
 
 .marquee-box {
