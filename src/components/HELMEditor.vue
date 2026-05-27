@@ -1,32 +1,24 @@
 <template>
   <div class="helm-editor">
     <!-- 顶部工具栏 -->
-    <div class="toolbar">
-      <div class="toolbar-group">
+    <el-toolbar class="toolbar">
+      <el-space wrap>
         <el-button @click="newMoleculeFull" :icon="Plus">新建</el-button>
         <el-button @click="openFile" :icon="FolderOpened">打开</el-button>
         <el-button @click="saveHELM" :icon="Download">保存</el-button>
-      </div>
-      
-      <div class="toolbar-group">
+        
         <el-button @click="exportFormat('SMILES')" :icon="Document">SMILES</el-button>
         <el-button @click="exportFormat('Molfile')" :icon="Document">Molfile</el-button>
         <el-button @click="exportFormat('HELM')" :icon="Document">HELM</el-button>
-      </div>
-      
-      <div class="toolbar-group">
+        
         <el-button @click="undoFull" :icon="RefreshLeft">撤销</el-button>
         <el-button @click="redoFull" :icon="RefreshRight">重做</el-button>
-      </div>
-      
-      <div class="toolbar-group">
+        
         <el-button @click="deleteSelected" :icon="Delete" type="danger" :disabled="selectedIndices.size === 0">
           删除选中 ({{ selectedIndices.size }})
         </el-button>
         <el-button @click="clearCanvas" :icon="Delete" type="warning">清空画布</el-button>
-      </div>
-      
-      <div class="toolbar-group">
+        
         <el-button @click="setCanvasModeFull('manual')" :type="canvasMode === 'manual' ? 'primary' : ''">
           Manual
         </el-button>
@@ -54,14 +46,14 @@
         >
           连接线 {{ connectionMode ? '开' : '关' }}
         </el-button>
-      </div>
-    </div>
+      </el-space>
+    </el-toolbar>
     
     <!-- 主编辑区 -->
     <div class="editor-container">
       <!-- 左侧单体库 -->
-      <div class="monomer-library">
-        <h3>氨基酸</h3>
+      <el-card shadow="never" class="monomer-library">
+        <template #header>氨基酸</template>
         <div class="monomer-grid">
           <el-button
             v-for="aa in aminoAcids"
@@ -75,7 +67,7 @@
           </el-button>
         </div>
         
-        <h3>核苷酸</h3>
+        <template #header>核苷酸</template>
         <div class="monomer-grid">
           <el-button
             v-for="nt in nucleotides"
@@ -89,18 +81,20 @@
             {{ nt.code }}
           </el-button>
         </div>
-      </div>
+      </el-card>
       
       <!-- 中间画布区 -->
       <div class="canvas-area">
         <!-- 结构式 Canvas -->
-        <div class="structure-view">
-          <div class="structure-header">
-            <h3>结构式</h3>
-            <el-button size="small" @click="showSVG = !showSVG">
-              {{ showSVG ? '隐藏' : '查看' }} SVG
-            </el-button>
-          </div>
+        <el-card shadow="never" class="structure-view">
+          <template #header>
+            <div class="structure-header">
+              <span>结构式</span>
+              <el-button size="small" @click="showSVG = !showSVG">
+                {{ showSVG ? '隐藏' : '查看' }} SVG
+              </el-button>
+            </div>
+          </template>
           <StructureCanvas
             v-if="!showSVG"
             ref="structureCanvasRef"
@@ -131,10 +125,11 @@
             :height="300"
             @monomer-click="handleSVGMonomerClick"
           />
-        </div>
+        </el-card>
         
-        <div class="sequence-view">
-          <h3>序列视图</h3>
+        <!-- 序列视图 -->
+        <el-card shadow="never" class="sequence-view">
+          <template #header>序列视图</template>
           <div 
             ref="sequenceDisplayRef"
             class="sequence-display"
@@ -193,7 +188,7 @@
           </div>
         </div>
         
-        <div class="input-area">
+        <el-card shadow="never" class="input-area">
           <el-input
             v-model="helmInput"
             type="textarea"
@@ -201,19 +196,19 @@
             placeholder="粘贴 HELM 字符串或序列..."
             @change="parseInputFull"
           />
-        </div>
-      </div>
+        </el-card>
+      </el-card>
       
       <!-- 右侧信息面板 -->
-      <div class="info-panel">
-        <h3>分子信息</h3>
+      <el-card shadow="never" class="info-panel">
+        <template #header>分子信息</template>
         <el-descriptions :column="1" size="small">
           <el-descriptions-item label="类型">{{ polymerType }}</el-descriptions-item>
           <el-descriptions-item label="长度">{{ currentSequence.length }}</el-descriptions-item>
           <el-descriptions-item label="分子量">{{ calculatedMass }} Da</el-descriptions-item>
           <el-descriptions-item label="HELM">{{ helmOutput }}</el-descriptions-item>
         </el-descriptions>
-      </div>
+      </el-card>
     </div>
     <input
       ref="fileInputRef"
