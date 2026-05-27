@@ -97,7 +97,7 @@ export function useStrandLayout(options: UseStrandLayoutOptions) {
     const SPACING = 70   // 单体水平间距 / horizontal spacing between monomers
     const ROW_HEIGHT = 120 // 行高 / vertical spacing between rows
     const START_X = 80
-    const START_Y = 100
+    const START_Y = 60 // 从较低位置开始，留出上方空间
 
     const newPositions: Record<number, MonomerPosition> = {}
 
@@ -114,8 +114,9 @@ export function useStrandLayout(options: UseStrandLayoutOptions) {
     // Step 4: 更新位置 / Update positions
     monomerPositions.value = newPositions
 
-    // Step 5: 适配画布 / Fit canvas to content
-    if (structureCanvasRef.value?.fitToContent) {
+    // Step 5: 重置 viewport 并适配画布 / Reset viewport and fit canvas to content
+    if (structureCanvasRef.value) {
+      structureCanvasRef.value.resetView()
       structureCanvasRef.value.fitToContent()
     }
 

@@ -90,7 +90,7 @@
       <!-- 中间画布区 -->
       <div class="canvas-area">
         <!-- 结构式 Canvas -->
-        <el-card shadow="never" class="structure-view" :body-style="{ height: '100%', minHeight: '350px', overflow: 'hidden', padding: '12px' }">
+        <el-card shadow="never" class="structure-view" :body-style="{ padding: '12px' }">
           <template #header>
             <div class="structure-header">
               <span>结构式</span>
@@ -99,8 +99,8 @@
               </el-button>
             </div>
           </template>
+          <!-- Canvas 实图始终显示 -->
           <StructureCanvas
-            v-if="!showSVG"
             ref="structureCanvasRef"
             :sequence="currentSequence"
             :polymer-type="polymerType"
@@ -117,6 +117,7 @@
             @update:monomer-positions="handleMonomerPositionsUpdate"
             @connection-click="handleCanvasConnectionClick"
           />
+          <!-- SVG 在 Canvas 下面展示（可选） -->
           <StructureSVG
             v-if="showSVG"
             :sequence="currentSequence"
@@ -780,31 +781,12 @@ saveToHistory()
 .structure-view {
   background: #fff;
   border-radius: 4px;
-  flex: 1;
-  min-height: 400px;
-  display: flex;
-  flex-direction: column;
-}
-
-.structure-view :deep(.el-card) {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-
-.structure-view :deep(.el-card__header) {
-  flex-shrink: 0;
 }
 
 .structure-view :deep(.el-card__body) {
-  flex: 1;
-  min-height: 350px;
-  overflow: hidden;
-}
-
-.structure-view :deep(.structure-canvas-container) {
-  height: 100%;
-  min-height: 350px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .structure-header {
