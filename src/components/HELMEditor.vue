@@ -3,7 +3,7 @@
     <!-- 顶部工具栏 -->
     <div class="toolbar">
       <div class="toolbar-group">
-        <el-button @click="newMolecule" :icon="Plus">新建</el-button>
+        <el-button @click="newMoleculeFull" :icon="Plus">新建</el-button>
         <el-button @click="openFile" :icon="FolderOpened">打开</el-button>
         <el-button @click="saveHELM" :icon="Download">保存</el-button>
       </div>
@@ -15,8 +15,8 @@
       </div>
       
       <div class="toolbar-group">
-        <el-button @click="undo" :icon="RefreshLeft">撤销</el-button>
-        <el-button @click="redo" :icon="RefreshRight">重做</el-button>
+        <el-button @click="undoFull" :icon="RefreshLeft">撤销</el-button>
+        <el-button @click="redoFull" :icon="RefreshRight">重做</el-button>
       </div>
       
       <div class="toolbar-group">
@@ -27,28 +27,28 @@
       </div>
       
       <div class="toolbar-group">
-        <el-button @click="setCanvasMode('manual')" :type="canvasMode === 'manual' ? 'primary' : ''">
+        <el-button @click="setCanvasModeFull('manual')" :type="canvasMode === 'manual' ? 'primary' : ''">
           Manual
         </el-button>
         <el-button
-          @click="setCanvasMode('select')"
+          @click="setCanvasModeFull('select')"
           :type="canvasMode === 'select' ? 'primary' : ''"
           :icon="Pointer"
         >
           Select
         </el-button>
         <el-button
-          @click="setCanvasMode('drag')"
+          @click="setCanvasModeFull('drag')"
           :type="canvasMode === 'drag' ? 'primary' : ''"
           :icon="Pointer"
         >
           Drag
         </el-button>
-        <el-button @click="serializeStrands" :icon="Rank">
+        <el-button @click="serializeStrandsFull" :icon="Rank">
           序列化
         </el-button>
         <el-button
-          @click="toggleConnectionMode"
+          @click="toggleConnectionModeFull"
           :type="connectionMode ? 'success' : ''"
           :icon="Connection"
         >
@@ -66,7 +66,7 @@
           <el-button
             v-for="aa in aminoAcids"
             :key="aa.code"
-            @click="addMonomer(aa)"
+            @click="addMonomerFull(aa)"
             @dragstart="handleMonomerDragStart($event, aa)"
             draggable="true"
             size="small"
@@ -80,7 +80,7 @@
           <el-button
             v-for="nt in nucleotides"
             :key="nt.code"
-            @click="addMonomer(nt)"
+            @click="addMonomerFull(nt)"
             @dragstart="handleMonomerDragStart($event, nt)"
             draggable="true"
             size="small"
@@ -142,7 +142,7 @@
               'sequence-display--connection': connectionMode 
             }"
             @dragover="handleSequenceDragOver"
-            @drop="handleSequenceDrop"
+            @drop="handleSequenceDropFull"
             @pointerdown="handleMarqueePointerDown"
           >
             <!-- Canvas 层用于绘制连接线 -->
@@ -167,17 +167,17 @@
               ]"
               :draggable="!isMarqueeMode && !connectionMode"
               @click="handleMonomerClick(index, $event)"
-              @dragstart="handleDragStart($event, index)"
+              @dragstart="handleDragStartFull($event, index)"
               @dragend="handleDragEnd($event)"
               @dragover="handleDragOver($event, index)"
               @dragleave="handleDragLeave($event)"
-              @drop="handleDrop($event, index)"
+              @drop="handleDropFull($event, index)"
               @mouseenter="handleMonomerMouseEnter(index)"
-              @mouseleave="handleMonomerMouseLeave(index)"
+              @mouseleave="onMonomerMouseLeave(index)"
             >
               <span class="monomer-drag-handle">☰</span>
               {{ monomer.code }}
-              <el-icon class="remove-btn" @click.stop="removeMonomer(index)">
+              <el-icon class="remove-btn" @click.stop="removeMonomerFull(index)">
                 <Close />
               </el-icon>
             </span>
@@ -198,7 +198,7 @@
             type="textarea"
             :rows="3"
             placeholder="粘贴 HELM 字符串或序列..."
-            @change="parseInput"
+            @change="parseInputFull"
           />
         </div>
       </div>
@@ -474,7 +474,7 @@ function handleSVGMonomerClick(index: number) {
   selectedIndices.value.add(index)
 }
 
-function handleMonomerMouseLeave(_index: number) {
+function onMonomerMouseLeave(_index: number) {
   handleMonomerMouseLeave()
 }
 
