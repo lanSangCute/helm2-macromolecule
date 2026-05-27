@@ -2,10 +2,10 @@
   <div class="structure-svg">
     <svg
       width="100%"
-      :height="height"
-      :viewBox="`0 0 ${width} ${height}`"
+      :viewBox="`0 0 ${viewBoxWidth} ${height}`"
       xmlns="http://www.w3.org/2000/svg"
-      preserveAspectRatio="xMidYMid meet"
+      preserveAspectRatio="none"
+      style="min-height: 250px; display: block;"
     >
       <!-- 绘制单体 -->
       <g v-for="pos in positions" :key="pos.index">
@@ -140,9 +140,19 @@ const CONFIG = {
   }
 }
 
+// 计算动态 viewBox 尺寸
+const viewBoxWidth = computed(() => {
+  const spacing = 80
+  const count = props.sequence.length
+  if (count === 0) return props.width
+  return Math.max(props.width, 60 + (count - 1) * spacing + 60)
+})
+
+const viewBoxHeight = computed(() => props.height)
+
 // 计算单体位置
 const positions = computed(() => {
-  const spacing = 70
+  const spacing = 80
   return props.sequence.map((monomer, index) => {
     const storedPos = props.monomerPositions[index]
     let x, y
