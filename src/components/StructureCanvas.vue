@@ -230,9 +230,11 @@ function getMonomerPositions() {
       x = storedPos.x
       y = storedPos.y
     } else {
-      // 默认水平排列（相对于 viewport）
+      // 默认水平排列，Y 坐标使用 canvas 高度的中间位置（确保最小值）
+      const canvasHeight = canvasSize.value.height || 350
+      const centerY = canvasHeight / 2
       x = viewport.value.offsetX + index * spacing * viewport.value.scale
-      y = viewport.value.offsetY
+      y = centerY
     }
 
     positions.push({
@@ -1119,7 +1121,7 @@ defineExpose({
   position: relative;
   width: 100%;
   height: 100%;
-  min-height: 300px;
+  min-height: 350px;
   background: #fff;
   border: 1px solid #e4e7ed;
   border-radius: 4px;

@@ -90,7 +90,7 @@
       <!-- 中间画布区 -->
       <div class="canvas-area">
         <!-- 结构式 Canvas -->
-        <el-card shadow="never" class="structure-view">
+        <el-card shadow="never" class="structure-view" :body-style="{ height: '100%', minHeight: '350px', overflow: 'hidden', padding: '12px' }">
           <template #header>
             <div class="structure-header">
               <span>结构式</span>
@@ -780,8 +780,31 @@ saveToHistory()
 .structure-view {
   background: #fff;
   border-radius: 4px;
-  padding: 16px;
-  min-height: 300px;
+  flex: 1;
+  min-height: 400px;
+  display: flex;
+  flex-direction: column;
+}
+
+.structure-view :deep(.el-card) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.structure-view :deep(.el-card__header) {
+  flex-shrink: 0;
+}
+
+.structure-view :deep(.el-card__body) {
+  flex: 1;
+  min-height: 350px;
+  overflow: hidden;
+}
+
+.structure-view :deep(.structure-canvas-container) {
+  height: 100%;
+  min-height: 350px;
 }
 
 .structure-header {
